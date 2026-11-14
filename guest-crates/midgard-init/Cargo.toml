@@ -13,5 +13,5 @@ async-io = "2.6.0"
 event-listener = "5"
 futures-lite = "2.6.1"
 libc = "0.2"
-midgard-protocol = { path = "../midgard-protocol", features = ["async"] }
+midgard-protocol = { path = "../../crates/midgard-protocol", features = ["async"] }
 thiserror = "2"

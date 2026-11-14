@@ -7,7 +7,7 @@ distributions' disk images.
     build.py targets [--changed-since <commit>]
 
 The targets are `kernel` (guest/kernel.toml and guest/linux.config), `agent`
-(crates/midgard-init as a static binary, with the versions of the guest protocol that it
+(guest-crates/midgard-init as a static binary, with the versions of the guest protocol that it
 speaks in agent.json), `waypipe` (guest/waypipe.toml, a static binary, too) and the images
 in guest/images/<name>: image.toml says how to bootstrap the root file system, the files in
 overlay/ are copied into it, and `provision`, a shell script, runs in a chroot of it (as
@@ -72,6 +72,7 @@ BOOT_FILES = "linux"
 # The agent and the guest's waypipe are static binaries, which run in any distribution.
 RUST_TARGET = "x86_64-unknown-linux-musl"
 CRATES = REPO / "crates"
+GUEST_CRATES = REPO / "guest-crates"
 
 
 class Failure(Exception):
@@ -147,10 +148,10 @@ def inputs(target):
         files += [GUEST / "kernel.toml", GUEST / "linux.config"]
     elif target == "agent":
         # (With the crate of the guest protocol, which it is built with.)
-        files += [CRATES / "midgard-init" / "Cargo.toml", CRATES / "midgard-init" / "Cargo.lock"]
-        files += [CRATES / "midgard-protocol" / "Cargo.toml"]
-        for crate in ["midgard-init", "midgard-protocol"]:
-            files += sorted(path for path in (CRATES / crate / "src").rglob("*") if path.is_file())
+        files += [GUEST_CRATES / "Cargo.toml", GUEST_CRATES / "Cargo.lock"]
+        for crate in [GUEST_CRATES / "midgard-init", CRATES / "midgard-protocol"]:
+            files += [crate / "Cargo.toml"]
+            files += sorted(path for path in (crate / "src").rglob("*") if path.is_file())
     elif target == "waypipe":
         files += [GUEST / "waypipe.toml"]
     else:
@@ -282,7 +283,8 @@ def build_kernel(out):
 
 
 def cargo_build(manifest, name, *args, env={}):
-    """Builds a binary of a crate for RUST_TARGET (with its lockfile); returns its path."""
+    """Builds the binaries of a crate or workspace for RUST_TARGET (with its lockfile) in
+    the target directory <name>-target of the cache; returns the directory of the binaries."""
     require("cargo")
     target_dir = CACHE / f"{name}-target"
     run(
@@ -290,14 +292,14 @@ def cargo_build(manifest, name, *args, env={}):
         "--manifest-path", manifest, "--target-dir", target_dir, *args,
         env=dict(os.environ, **env),
     )  # fmt: skip
-    return target_dir / RUST_TARGET / "release" / name
+    return target_dir / RUST_TARGET / "release"
 
 
 def build_agent(out):
     """Builds midgard-init and asks it which versions of the guest protocol it speaks
     (see crates/midgard-protocol/src/version.rs)."""
     log("building midgard-init")
-    binary = cargo_build(CRATES / "midgard-init" / "Cargo.toml", "midgard-init")
+    binary = cargo_build(GUEST_CRATES / "Cargo.toml", "guest") / "midgard-init"
     shutil.copyfile(binary, out / "midgard-init")
     (out / "midgard-init").chmod(0o755)
     answer = subprocess.run(
@@ -331,11 +333,11 @@ def build_waypipe(out):
             raise Failure(f"{pin['git']} has {pin['tag']} at {head} instead of {pin['commit']}")
         partial.rename(source)
     log(f"building waypipe {pin['version']}")
-    binary = cargo_build(
+    release = cargo_build(
         source / "Cargo.toml", "waypipe", "--no-default-features", "--bin", "waypipe",
         env={"CARGO_PROFILE_RELEASE_STRIP": "debuginfo"},
     )  # fmt: skip
-    shutil.copyfile(binary, out / "guest-waypipe")
+    shutil.copyfile(release / "waypipe", out / "guest-waypipe")
     (out / "guest-waypipe").chmod(0o755)
     return ["guest-waypipe"], {"version": pin["version"]}
 
