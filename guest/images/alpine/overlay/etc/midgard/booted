@@ -1,5 +1,5 @@
 #!/bin/sh
-# Tells midgard-init that the guest booted (`ready = "notify"`), once the users' OpenRC
+# Tells midgard-agent that the guest booted (`ready = "notify"`), once the users' OpenRC
 # instances (which start in the background) started their services.
 for link in /etc/runlevels/default/user.*; do
     [ -e "$link" ] || continue
@@ -13,4 +13,4 @@ for link in /etc/runlevels/default/user.*; do
         sleep 0.05
     done
 done
-exec /run/midgard/midgard-init ready
+exec /run/midgard/midgard-helper ready
