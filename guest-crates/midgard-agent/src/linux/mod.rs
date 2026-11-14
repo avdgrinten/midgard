@@ -19,6 +19,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use async_io::{Async, Timer};
+use clap::{Parser, Subcommand};
 use midgard_protocol::AGENT_PORT;
 use midgard_protocol::guest::{
     CONFIG_PATH, Display, GuestConfig, HELPER_PATH, OLD_HELPER_PATH, WAYPIPE_PATH, read_config,
@@ -61,6 +62,48 @@ fn load_config() -> GuestConfig {
     }
 }
 
+/// midgard's guest agent, as midgard-init runs it. The guest runs it as the helper
+/// instead (see [`Helper`]).
+#[derive(Debug, Parser)]
+#[command(name = "midgard-agent")]
+struct Agent {
+    #[command(subcommand)]
+    mode: AgentMode,
+}
+
+#[derive(Debug, Subcommand)]
+enum AgentMode {
+    /// Serve sessions, watch the guest boot and run the Wayland display
+    Serve,
+    /// Wait forever (the waypipe server's command)
+    Pause,
+    /// Print the oldest and the newest version of the guest protocol that we speak (for
+    /// guest/build.py)
+    #[command(hide = true)]
+    Protocol,
+}
+
+/// What the guest runs to reach midgard's guest agent (as /run/midgard/midgard-helper).
+/// Templates rely on these modes: they must keep working as they are.
+#[derive(Debug, Parser)]
+#[command(name = "midgard-helper")]
+struct Helper {
+    /// Without a mode, it runs as `exec` (a wrapper runs it as the user's login shell,
+    /// i.e., without arguments).
+    #[command(subcommand)]
+    mode: Option<HelperMode>,
+}
+
+#[derive(Debug, Subcommand)]
+enum HelperMode {
+    /// Run a session's command (as the wrapper's helper, in the user's session)
+    Exec,
+    /// Tell the agent that the guest finished booting
+    Ready,
+    /// Run the Wayland display's waypipe server [default socket: $XDG_RUNTIME_DIR/wayland-0]
+    Waypipe { socket: Option<String> },
+}
+
 /// Whether we run as the helper, going by the name that we were run as: one executable
 /// is both, such that the guest's modes are not part of what midgard-init runs (and the
 /// other way around). A login shell's name starts with a dash.
@@ -75,32 +118,28 @@ fn is_helper(arg0: &OsStr) -> bool {
 }
 
 pub fn main() {
-    // midgard-init runs us as the agent. The guest runs us as the helper, in other modes
-    // (templates rely on these: they must keep working as they are); a wrapper runs the
-    // helper as the user's login shell (see launcher::helper), i.e., without arguments.
-    let mut args = std::env::args();
-    let helper = args.next().is_some_and(|arg0| is_helper(OsStr::new(&arg0)));
-    let mode = args.next();
-    let result = match (helper, mode.as_deref()) {
-        (false, Some("serve")) => agent().map_err(|error| format!("{error:#}")),
-        (false, Some("pause")) => display::pause(),
-        (false, Some("protocol")) => {
-            // For guest/build.py: the versions of the guest protocol that we speak.
-            println!("{OLDEST_PROTOCOL} {PROTOCOL}");
-            Ok(())
-        }
-        (true, None | Some("exec")) => launcher::helper(),
-        (true, Some("ready")) => ready::notify(),
-        (true, Some("waypipe")) => display::server(args.next()),
-        (false, None) => Err("no mode".into()),
-        (_, Some(mode)) => Err(format!("unknown mode {mode:?}")),
+    let helper = std::env::args_os()
+        .next()
+        .is_some_and(|arg0| is_helper(&arg0));
+    let (name, result) = if helper {
+        let result = match Helper::parse().mode {
+            None | Some(HelperMode::Exec) => launcher::helper(),
+            Some(HelperMode::Ready) => ready::notify(),
+            Some(HelperMode::Waypipe { socket }) => display::server(socket),
+        };
+        ("midgard-helper", result)
+    } else {
+        let result = match Agent::parse().mode {
+            AgentMode::Serve => agent().map_err(|error| format!("{error:#}")),
+            AgentMode::Pause => display::pause(),
+            AgentMode::Protocol => {
+                println!("{OLDEST_PROTOCOL} {PROTOCOL}");
+                Ok(())
+            }
+        };
+        ("midgard-agent", result)
     };
     if let Err(error) = result {
-        let name = if helper {
-            "midgard-helper"
-        } else {
-            "midgard-agent"
-        };
         eprintln!("{name}: {error}");
         std::process::exit(1);
     }
@@ -159,9 +198,18 @@ async fn serve() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use clap::CommandFactory;
     use midgard_protocol::guest::AGENT_PATH;
 
     use super::*;
+
+    fn agent(args: &[&str]) -> Result<AgentMode, clap::Error> {
+        Agent::try_parse_from(args).map(|cli| cli.mode)
+    }
+
+    fn helper(args: &[&str]) -> Result<Option<HelperMode>, clap::Error> {
+        Helper::try_parse_from(args).map(|cli| cli.mode)
+    }
 
     /// What templates run: these paths must keep working.
     #[test]
@@ -178,5 +226,55 @@ mod tests {
         assert!(!is_helper(OsStr::new(AGENT_PATH)));
         assert!(!is_helper(OsStr::new("midgard-agent")));
         assert!(!is_helper(OsStr::new("")));
+    }
+
+    #[test]
+    fn agent_modes() {
+        Agent::command().debug_assert();
+        assert!(matches!(
+            agent(&["midgard-agent", "serve"]),
+            Ok(AgentMode::Serve)
+        ));
+        assert!(matches!(
+            agent(&["midgard-agent", "pause"]),
+            Ok(AgentMode::Pause)
+        ));
+        assert!(matches!(
+            agent(&["midgard-agent", "protocol"]),
+            Ok(AgentMode::Protocol)
+        ));
+        assert!(agent(&["midgard-agent"]).is_err());
+        // The helper's modes.
+        assert!(agent(&["midgard-agent", "exec"]).is_err());
+        assert!(agent(&["midgard-agent", "ready"]).is_err());
+        assert!(agent(&["midgard-agent", "waypipe"]).is_err());
+    }
+
+    /// What templates run: these must keep working.
+    #[test]
+    fn helper_modes() {
+        Helper::command().debug_assert();
+        assert!(matches!(helper(&["-midgard-helper"]), Ok(None)));
+        assert!(matches!(
+            helper(&["midgard-helper", "exec"]),
+            Ok(Some(HelperMode::Exec))
+        ));
+        assert!(matches!(
+            helper(&["midgard-helper", "ready"]),
+            Ok(Some(HelperMode::Ready))
+        ));
+        assert!(matches!(
+            helper(&["midgard-helper", "waypipe"]),
+            Ok(Some(HelperMode::Waypipe { socket: None }))
+        ));
+        assert!(matches!(
+            helper(&["midgard-helper", "waypipe", "/run/x"]),
+            Ok(Some(HelperMode::Waypipe { socket: Some(socket) })) if socket == "/run/x"
+        ));
+        // The agent's modes.
+        assert!(helper(&["midgard-helper", "serve"]).is_err());
+        assert!(helper(&["midgard-helper", "pause"]).is_err());
+        assert!(helper(&["midgard-helper", "protocol"]).is_err());
+        assert!(helper(&["midgard-helper", "bogus"]).is_err());
     }
 }
