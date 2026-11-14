@@ -13,6 +13,12 @@ use crate::version::{Hello, Mismatch, Versions};
 /// The name of the guest configuration in the initramfs.
 pub const CONFIG_FILE: &str = "guest-config";
 
+/// The agent's files (in the directory of [`crate::machine::MachineConfig::agent`]):
+/// midgard-init, which the initramfs runs as /init (PID 1), and midgard-agent, which the
+/// initramfs has under the same name (if the directory has it).
+pub const INIT_FILE: &str = "midgard-init";
+pub const AGENT_FILE: &str = "midgard-agent";
+
 /// The contents of [`CONFIG_FILE`].
 pub fn encode_config(config: &GuestConfig) -> io::Result<Vec<u8>> {
     let mut file = Vec::new();
@@ -59,9 +65,9 @@ pub fn read_config(reader: &mut impl Read) -> Result<(u32, GuestConfig), ConfigE
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GuestConfig {
-    /// The distribution's init (an absolute path in the guest), which the agent executes
-    /// as PID 1 once it set up the guest; the agent keeps running as its child. Without
-    /// it, the agent stays PID 1 and no services run.
+    /// The distribution's init (an absolute path in the guest), which midgard-init
+    /// executes as PID 1 once it set up the guest and started the agent. Without it,
+    /// midgard-init stays PID 1 and no services run.
     pub init: Option<String>,
     /// How sessions wait for the distribution's init to finish booting.
     pub ready: Ready,

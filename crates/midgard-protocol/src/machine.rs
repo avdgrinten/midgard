@@ -14,7 +14,8 @@ pub struct MachineConfig {
     /// Managarm's eir).
     pub kernel: PathBuf,
     pub initrd: Option<PathBuf>,
-    /// Boot midgard-init (from this file) as the guest's agent.
+    /// Boot the guest's agent from this directory (see [`crate::guest::INIT_FILE`] and
+    /// [`crate::guest::AGENT_FILE`]).
     pub agent: Option<PathBuf>,
     /// The kernel's command line, to which midgard only adds `append`. None: midgard
     /// builds the command line of a Linux guest (its console, its network configuration

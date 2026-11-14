@@ -14,7 +14,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use async_executor::Executor;
 use event_listener::Event;
 use midgard_protocol::control::Counters;
-use midgard_protocol::guest::Ready;
+use midgard_protocol::guest::{AGENT_FILE, INIT_FILE, Ready};
 use midgard_protocol::machine::{ConsoleKind, MachineConfig};
 use midgard_protocol::{SHARE_TAG, param};
 
@@ -204,8 +204,16 @@ fn load_images(config: &MachineConfig) -> Result<(Vec<u8>, Option<Vec<u8>>)> {
                 Some(path) => Some(read(path, "the guest's waypipe")?),
                 None => None,
             };
+            // (A midgard-init that runs the agent itself does not need midgard-agent.)
+            let midgard_agent = agent.join(AGENT_FILE);
+            let midgard_agent = if midgard_agent.exists() {
+                Some(read(&midgard_agent, "midgard-agent")?)
+            } else {
+                None
+            };
             Some(boot::initramfs::build(
-                &read(agent, "the agent")?,
+                &read(&agent.join(INIT_FILE), "midgard-init")?,
+                midgard_agent.as_deref(),
                 &guest_config,
                 waypipe.as_deref(),
             ))

@@ -1,7 +1,8 @@
 //! Boot files, which midgard boots guests with: a directory in midgard's boot directory
 //! (see [`paths::boot_dir`]; `bifrost pull` installs them, see [`crate::pull`]) with the
-//! guest kernel (`vmlinuz`), the agent (`midgard-init`), the guest's waypipe
-//! (`guest-waypipe`, if there is one) and `manifest.json`, which says what the files are.
+//! guest kernel (`vmlinuz`), the agent (`midgard-init` and `midgard-agent`, see
+//! [`midgard_protocol::guest::INIT_FILE`]), the guest's waypipe (`guest-waypipe`, if there
+//! is one) and `manifest.json`, which says what the files are.
 //! They are built and distributed apart from midgard (and from the templates, whose
 //! instances say which boot files they boot with), so the manifest says which versions of
 //! the guest protocol the agent speaks.
@@ -12,6 +13,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
+use midgard_protocol::guest::INIT_FILE;
 use midgard_protocol::version::{Mismatch, Versions};
 use serde::{Deserialize, Serialize};
 
@@ -23,10 +25,8 @@ pub const DEFAULT: &str = "linux";
 
 /// The guest kernel in the boot files' directory.
 const KERNEL: &str = "vmlinuz";
-/// The agent in the boot files' directory.
-const AGENT: &str = "midgard-init";
 /// The files that boot files need to have.
-pub const REQUIRED: [&str; 2] = [KERNEL, AGENT];
+pub const REQUIRED: [&str; 2] = [KERNEL, INIT_FILE];
 /// The guest's waypipe (a static Linux build) in the boot files' directory.
 const WAYPIPE: &str = "guest-waypipe";
 /// The manifest in the boot files' directory.
@@ -47,6 +47,7 @@ pub struct Manifest {
 #[derive(Debug)]
 pub struct BootFiles {
     pub kernel: PathBuf,
+    /// The directory with the agent's files (the boot files' directory).
     pub agent: PathBuf,
     pub waypipe: Option<PathBuf>,
     pub manifest: Manifest,
@@ -72,7 +73,7 @@ impl BootFiles {
         let manifest = read_manifest(&dir)?;
         Ok(Self {
             kernel: dir.join(KERNEL),
-            agent: dir.join(AGENT),
+            agent: dir.clone(),
             waypipe: Some(dir.join(WAYPIPE)).filter(|path| path.is_file()),
             manifest,
         })

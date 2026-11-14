@@ -22,8 +22,8 @@
 //! name = "alpine"
 //!
 //! [guest]
-//! # The distribution's init, which the agent starts as PID 1 (default: none, the agent
-//! # stays PID 1).
+//! # The distribution's init, which midgard-init executes as PID 1 (default: none,
+//! # midgard-init stays PID 1).
 //! init = "/sbin/init"
 //! # How sessions wait for the guest to boot: "none" (default), "systemd" (until
 //! # `systemctl is-system-running --wait` returns) or "notify" (until the guest runs

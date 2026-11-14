@@ -62,7 +62,7 @@ fn config(boot: &BootArgs) -> Result<MachineConfig> {
             (Some(share), false) => Some(absolute(share)?),
             (None, false) => Some("/".into()),
         },
-        // The agent stays PID 1.
+        // midgard-init stays PID 1.
         guest: GuestConfig::default(),
         waypipe: None,
     })
