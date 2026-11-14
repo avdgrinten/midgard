@@ -10,17 +10,19 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+use async_channel::Sender;
 use async_io::{Async, Timer};
 use event_listener::Event;
 use futures_lite::future;
 use midgard_protocol::guest::Ready;
 
-use super::{PATH, RUN_DIR, log, process};
+use super::{PATH, RUN_DIR, log, process, rt};
 
-/// How long sessions wait for the distribution's init; then they run anyway.
+/// How long sessions wait for the distribution's init; then they run anyway. (And how
+/// long `midgard-init ready` waits for the agent.)
 const BOOT_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// The socket that `midgard-init ready` connects to (with [`Ready::Notify`]).
+/// The socket that `midgard-init ready` connects to (see [`Watcher`]).
 const NOTIFY_SOCKET: &str = "/run/midgard/notify";
 
 /// Whether the guest finished booting (or we gave up waiting).
@@ -41,30 +43,22 @@ pub async fn wait() {
     }
 }
 
-/// What the watcher waits for. It is prepared before the distribution's init starts,
-/// such that the guest cannot notify us before we listen.
-pub enum Watcher {
-    Immediately,
-    Systemd,
-    Notify(UnixListener),
+/// What the watcher waits for, and the socket that `midgard-init ready` connects to. The
+/// socket exists in every mode, such that `midgard-init ready` does not wait for nothing
+/// (e.g., if the guest runs it although the configuration does not say so).
+pub struct Watcher {
+    ready: Ready,
+    listener: Option<UnixListener>,
 }
 
 impl Watcher {
     pub fn new(ready: Ready) -> Self {
-        match ready {
-            Ready::Immediately => Watcher::Immediately,
-            Ready::Systemd => Watcher::Systemd,
-            Ready::Notify => {
-                let _ = std::fs::remove_file(NOTIFY_SOCKET);
-                match UnixListener::bind(NOTIFY_SOCKET) {
-                    Ok(listener) => Watcher::Notify(listener),
-                    Err(error) => {
-                        log!("listening on {NOTIFY_SOCKET}: {error}");
-                        Watcher::Immediately
-                    }
-                }
-            }
-        }
+        // Left over from an agent that is gone.
+        let _ = std::fs::remove_file(NOTIFY_SOCKET);
+        let listener = UnixListener::bind(NOTIFY_SOCKET)
+            .inspect_err(|error| log!("listening on {NOTIFY_SOCKET}: {error}"))
+            .ok();
+        Self { ready, listener }
     }
 }
 
@@ -72,17 +66,26 @@ impl Watcher {
 /// guest booted, before sessions continue.
 pub async fn watch(watcher: Watcher, then: impl Future<Output = ()>) {
     let start = Instant::now();
-    let booted = match watcher {
-        Watcher::Immediately => None,
-        Watcher::Systemd => {
+    let (notify, notified) = async_channel::bounded(1);
+    if let Some(listener) = watcher.listener {
+        rt::spawn(accept(listener, notify)).detach();
+    }
+    let booted = match watcher.ready {
+        Ready::Immediately => None,
+        Ready::Systemd => {
             log!("waiting for systemd to finish booting");
             Some(systemd_booted(start + BOOT_TIMEOUT).await)
         }
-        Watcher::Notify(listener) => {
+        Ready::Notify => {
             log!("waiting for the guest to run {RUN_DIR}/midgard-init ready");
-            let booted = notified(listener).await;
-            let _ = std::fs::remove_file(NOTIFY_SOCKET);
-            Some(booted)
+            let notified = async { notified.recv().await.is_ok() };
+            Some(
+                future::or(notified, async {
+                    Timer::after(BOOT_TIMEOUT).await;
+                    false
+                })
+                .await,
+            )
         }
     };
     match booted {
@@ -111,21 +114,27 @@ async fn systemd_booted(deadline: Instant) -> bool {
     run_with_timeout(&["systemctl", "is-system-running", "--wait"], remaining).await
 }
 
-/// Waits for `midgard-init ready` to connect.
-async fn notified(listener: UnixListener) -> bool {
+/// Accepts (and closes) the connections of `midgard-init ready` for as long as the agent
+/// runs; the first one goes to `notify` (for [`Ready::Notify`]).
+async fn accept(listener: UnixListener, notify: Sender<()>) {
     let listener = match Async::new(listener) {
         Ok(listener) => listener,
         Err(error) => {
             log!("{NOTIFY_SOCKET}: {error}");
-            return false;
+            return;
         }
     };
-    let accept = async { listener.accept().await.is_ok() };
-    future::or(accept, async {
-        Timer::after(BOOT_TIMEOUT).await;
-        false
-    })
-    .await
+    loop {
+        match listener.accept().await {
+            Ok(_) => {
+                let _ = notify.try_send(());
+            }
+            Err(error) => {
+                log!("{NOTIFY_SOCKET}: {error}");
+                Timer::after(Duration::from_millis(100)).await;
+            }
+        }
+    }
 }
 
 /// Runs a program (in PATH) and returns whether it exited with 0 within the timeout.
@@ -165,11 +174,23 @@ async fn run_with_timeout(argv: &[&str], timeout: Duration) -> bool {
     }
 }
 
-/// `midgard-init ready`: tells the agent that the guest finished booting.
-pub fn notify() -> io::Result<()> {
-    match UnixStream::connect(NOTIFY_SOCKET) {
-        // The agent does not wait (anymore), e.g., because the guest notified it before.
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        result => result.map(drop),
+/// `midgard-init ready`: tells the agent that the guest finished booting. If the agent
+/// does not listen yet, we wait for it, but not forever: the guest may wait for us while
+/// it boots.
+pub fn notify() -> Result<(), String> {
+    let deadline = Instant::now() + BOOT_TIMEOUT;
+    loop {
+        match UnixStream::connect(NOTIFY_SOCKET) {
+            Ok(_) => return Ok(()),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
+                ) && Instant::now() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(error) => return Err(format!("{NOTIFY_SOCKET}: {error}")),
+        }
     }
 }

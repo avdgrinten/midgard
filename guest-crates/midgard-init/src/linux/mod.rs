@@ -64,7 +64,7 @@ pub fn main() {
     let mode = std::env::args().nth(1);
     let result = match mode.as_deref() {
         None | Some("exec") => launcher::helper(),
-        Some("ready") => ready::notify().map_err(|error| error.to_string()),
+        Some("ready") => ready::notify(),
         Some("waypipe") => display::server(std::env::args().nth(2)),
         Some("pause") => display::pause(),
         Some("protocol") => {
