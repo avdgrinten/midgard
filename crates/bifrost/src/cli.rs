@@ -212,7 +212,8 @@ pub struct BootArgs {
     #[arg(long, value_name = "FILE")]
     pub agent: Option<PathBuf>,
 
-    /// Replace the base kernel parameters
+    /// The kernel's command line, instead of the one that midgard builds for a Linux
+    /// guest (console, network and root file system)
     #[arg(long, value_name = "ARGS", allow_hyphen_values = true)]
     pub cmdline: Option<String>,
 
