@@ -1,5 +1,5 @@
-//! The agent's runtime: the main thread runs all tasks (sessions, the reaper, ...) on
-//! one executor.
+//! The agent's runtime: the main thread runs all tasks (sessions, the ready watcher,
+//! ...) on one executor.
 
 use std::future::Future;
 

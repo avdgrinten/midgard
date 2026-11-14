@@ -6,7 +6,6 @@ mod display;
 mod launcher;
 mod process;
 mod ready;
-mod reaper;
 mod rt;
 mod session;
 mod sys;
@@ -244,10 +243,7 @@ fn user_setup(config: &GuestConfig) {
 /// default user (with `agent_display`, see [`Display::Agent`]).
 /// One thread runs everything (see [`rt`]).
 fn agent(watcher: ready::Watcher, agent_display: bool) -> Result<()> {
-    // Before any thread starts (async-io starts one).
-    reaper::block_sigchld();
     rt::block_on(async {
-        rt::spawn(reaper::run()).detach();
         // Sessions find the display running.
         let display = async move {
             if agent_display {

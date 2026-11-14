@@ -15,7 +15,7 @@ use event_listener::Event;
 use futures_lite::future;
 use midgard_protocol::guest::Ready;
 
-use super::{PATH, RUN_DIR, log, process, reaper};
+use super::{PATH, RUN_DIR, log, process};
 
 /// How long sessions wait for the distribution's init; then they run anyway.
 const BOOT_TIMEOUT: Duration = Duration::from_secs(120);
@@ -146,18 +146,17 @@ async fn run_with_timeout(argv: &[&str], timeout: Duration) -> bool {
         process::spawn(&command, &stdio)
     });
     match result {
-        Ok(pid) => {
-            let exited = reaper::watch(pid);
-            let status = future::or(async { exited.recv().await.ok() }, async {
+        Ok(child) => {
+            let status = future::or(async { child.wait().await.ok() }, async {
                 Timer::after(timeout).await;
                 None
             })
             .await;
             if status.is_none() {
-                // SAFETY: kill() only takes numbers.
-                unsafe { libc::kill(pid, libc::SIGKILL) };
+                child.kill(libc::SIGKILL);
+                let _ = child.wait().await;
             }
-            status.is_some_and(|status| libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0)
+            matches!(status, Some((Some(0), _)))
         }
         Err(error) => {
             log!("{error}");

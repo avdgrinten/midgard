@@ -16,7 +16,7 @@ use midgard_protocol::version::Hello;
 use super::launcher::{self, Signals};
 use super::process::{self, Stdio};
 use super::sys::{self, Error};
-use super::{PATH, display, log, ready, reaper, rt, users};
+use super::{PATH, display, log, ready, rt, users};
 
 /// How long we wait for output after the command exited (e.g., for background
 /// processes that keep the terminal open, we do not wait forever).
@@ -143,7 +143,7 @@ async fn run(mut exec: Exec, stream: &Stream) -> Result<(), Error> {
     let prepared = launcher::prepare(&config.launcher, &exec, &user, &cwd)?;
 
     // The command's input and its outputs (with whether each one is stderr).
-    let (pid, input, outputs) = match exec.tty {
+    let (child, input, outputs) = match exec.tty {
         Some(size) => {
             let (mut master, mut slave) = (0, 0);
             // SAFETY: openpty() writes two file descriptors.
@@ -176,10 +176,10 @@ async fn run(mut exec: Exec, stream: &Stream) -> Result<(), Error> {
                     libc::fchmod(slave.as_raw_fd(), 0o620);
                 }
             }
-            let pid = process::spawn(&prepared.command, &Stdio::Pty(slave.as_raw_fd()))?;
+            let child = process::spawn(&prepared.command, &Stdio::Pty(slave.as_raw_fd()))?;
             drop(slave);
             let master = nonblocking(master)?;
-            (pid, Input::Pty(master.clone()), vec![(master, false)])
+            (child, Input::Pty(master.clone()), vec![(master, false)])
         }
         None => {
             let (stdin_read, stdin_write) = pipe()?;
@@ -190,7 +190,7 @@ async fn run(mut exec: Exec, stream: &Stream) -> Result<(), Error> {
                 stdout: stdout_write.as_raw_fd(),
                 stderr: stderr_write.as_raw_fd(),
             };
-            let pid = process::spawn(&prepared.command, &stdio)?;
+            let child = process::spawn(&prepared.command, &stdio)?;
             drop((stdin_read, stdout_write, stderr_write));
             let stdin = Async::new(stdin_write)
                 .map_err(|error| Error::io("registering a file descriptor", error))?;
@@ -198,10 +198,10 @@ async fn run(mut exec: Exec, stream: &Stream) -> Result<(), Error> {
                 (nonblocking(stdout_read)?, false),
                 (nonblocking(stderr_read)?, true),
             ];
-            (pid, Input::Pipe(Some(stdin)), outputs)
+            (child, Input::Pipe(Some(stdin)), outputs)
         }
     };
-    let exited = reaper::watch(pid);
+    let pid = child.pid;
     let (responses, to_client) = async_channel::bounded(8);
     let writer = rt::spawn(write_responses(stream.clone(), to_client));
     let _ = responses.send(Response::Started { pid: pid as u32 }).await;
@@ -219,10 +219,7 @@ async fn run(mut exec: Exec, stream: &Stream) -> Result<(), Error> {
         responses.clone(),
     ));
 
-    let status = exited
-        .recv()
-        .await
-        .map_err(|_| Error::Message("lost the exit status".into()))?;
+    let (code, signal) = child.wait().await?;
     finished.set(true);
     // Dropping the pumps after the grace period cancels them.
     future::or(
@@ -236,7 +233,6 @@ async fn run(mut exec: Exec, stream: &Stream) -> Result<(), Error> {
         },
     )
     .await;
-    let (code, signal) = process::exit_status(status);
     let _ = responses.send(Response::Exited { code, signal }).await;
     // The session is over; stop reading requests (which also drops the task's sender, such
     // that the writer finishes).
@@ -327,7 +323,7 @@ async fn shutdown() {
         let argv = vec!["poweroff".to_string()];
         let command = process::Command::new(path, argv, vec![format!("PATH={PATH}")]);
         match process::spawn_background(&command) {
-            Ok(_) => {
+            Ok(()) => {
                 Timer::after(POWEROFF_TIMEOUT).await;
                 log!(
                     "init did not power off within {} s",
