@@ -1,10 +1,18 @@
-//! Starting session processes. We fork and exec ourselves (instead of using
-//! std::process::Command) because the reaper owns all wait statuses.
+//! Starting session processes and waiting for them. We fork and exec ourselves (instead
+//! of using std::process::Command) because we wait for processes asynchronously,
+//! through pidfds (see [`Child`]).
+//!
+//! SIGCHLD keeps its default disposition: if it were ignored, the kernel would reap our
+//! children itself (and waitid() would fail).
 
+use std::cell::Cell;
 use std::ffi::CString;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 
+use async_io::Async;
+
 use super::sys::{Error, cstring};
+use super::{log, rt};
 
 /// The stdin / stdout / stderr of a new process.
 pub enum Stdio {
@@ -68,8 +76,77 @@ pub struct Credentials {
     pub groups: Vec<u32>,
 }
 
-/// Starts a process in a new session. Returns the PID; the reaper reports its status.
-pub fn spawn(command: &Command, stdio: &Stdio) -> Result<i32, Error> {
+/// A process that we started (see [`spawn`]). Nobody else waits for our children, so
+/// its pidfd refers to it until we collect its status.
+pub struct Child {
+    pub pid: i32,
+    pidfd: Async<OwnedFd>,
+    /// Whether we collected its status.
+    reaped: Cell<bool>,
+}
+
+impl Child {
+    /// Waits for the process to exit and collects its status: (exit code, signal).
+    pub async fn wait(&self) -> Result<(Option<i32>, Option<i32>), Error> {
+        // (The pidfd is non-blocking: waitid() fails with EAGAIN until the process exited,
+        // which makes the pidfd readable.)
+        let info = self
+            .pidfd
+            .read_with(|pidfd| waitid(pidfd.as_raw_fd()))
+            .await
+            .map_err(|error| Error::io("waitid()", error))?;
+        self.reaped.set(true);
+        Ok(exit_status(&info))
+    }
+
+    /// Sends `signal` to the process.
+    pub fn kill(&self, signal: i32) {
+        // SAFETY: pidfd_send_signal() takes no siginfo_t (null) and no flags.
+        unsafe {
+            libc::syscall(
+                libc::SYS_pidfd_send_signal,
+                self.pidfd.as_raw_fd(),
+                signal,
+                std::ptr::null::<libc::siginfo_t>(),
+                0,
+            )
+        };
+    }
+}
+
+impl Drop for Child {
+    /// A session that fails after it started its command does not wait for it; we stop
+    /// it (nobody else collects the statuses of our children).
+    fn drop(&mut self) {
+        if !self.reaped.get() {
+            stop(self.pid);
+        }
+    }
+}
+
+/// Kills a child and collects its status (blocking).
+fn stop(pid: i32) {
+    // SAFETY: kill() and waitpid() only take numbers (and write the status).
+    unsafe {
+        libc::kill(pid, libc::SIGKILL);
+        libc::waitpid(pid, std::ptr::null_mut(), 0);
+    }
+}
+
+/// Collects the status of the process of `pidfd` (once it exited).
+fn waitid(pidfd: RawFd) -> std::io::Result<libc::siginfo_t> {
+    // SAFETY: waitid() writes the siginfo_t.
+    unsafe {
+        let mut info: libc::siginfo_t = std::mem::zeroed();
+        if libc::waitid(libc::P_PIDFD, pidfd as libc::id_t, &mut info, libc::WEXITED) != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(info)
+    }
+}
+
+/// Starts a process in a new session.
+pub fn spawn(command: &Command, stdio: &Stdio) -> Result<Child, Error> {
     // Everything that the child needs is prepared before fork(): after it, the child
     // may only call async-signal-safe functions.
     let path = command.path.as_str();
@@ -83,13 +160,6 @@ pub fn spawn(command: &Command, stdio: &Stdio) -> Result<i32, Error> {
     env_p.push(std::ptr::null());
     let credentials = command.credentials.as_ref();
     let groups: Vec<libc::gid_t> = credentials.map_or(Vec::new(), |c| c.groups.clone());
-    // The agent blocks SIGCHLD (see reaper::block_sigchld); the mask survives exec.
-    // SAFETY: sigemptyset() initializes the set.
-    let no_signals = unsafe {
-        let mut set: libc::sigset_t = std::mem::zeroed();
-        libc::sigemptyset(&mut set);
-        set
-    };
 
     // The child reports a failed exec through this pipe (it closes on a successful exec).
     let mut status_pipe = [0; 2];
@@ -140,7 +210,6 @@ pub fn spawn(command: &Command, stdio: &Stdio) -> Result<i32, Error> {
             }
             // Rust ignores SIGPIPE; the ignored disposition would survive exec.
             libc::signal(libc::SIGPIPE, libc::SIG_DFL);
-            libc::sigprocmask(libc::SIG_SETMASK, &no_signals, std::ptr::null_mut());
             let dropped = credentials.is_none_or(|c| {
                 libc::setgroups(groups.len(), groups.as_ptr()) == 0
                     && libc::setgid(c.gid) == 0
@@ -158,6 +227,9 @@ pub fn spawn(command: &Command, stdio: &Stdio) -> Result<i32, Error> {
         }
     }
 
+    // SAFETY: pidfd_open() only takes numbers.
+    let pidfd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) } as RawFd;
+    let pidfd_error = std::io::Error::last_os_error();
     // SAFETY: We own the write end; reading the errno is plain I/O.
     let errno = unsafe {
         libc::close(status_write);
@@ -166,11 +238,30 @@ pub fn spawn(command: &Command, stdio: &Stdio) -> Result<i32, Error> {
         libc::close(status_read);
         (count == 4).then_some(errno)
     };
+    if pidfd < 0 {
+        // We cannot wait for the child asynchronously.
+        stop(pid);
+        return Err(Error::io("pidfd_open()", pidfd_error));
+    }
+    // SAFETY: We own the new file descriptor.
+    let pidfd = unsafe { OwnedFd::from_raw_fd(pidfd) };
     if let Some(errno) = errno {
-        // Nobody registers the child, so the reaper drops its status.
+        // The child exits right after reporting the error.
+        let _ = waitid(pidfd.as_raw_fd());
         return Err(Error::io(path, std::io::Error::from_raw_os_error(errno)));
     }
-    Ok(pid)
+    let pidfd = match Async::new(pidfd) {
+        Ok(pidfd) => pidfd,
+        Err(error) => {
+            stop(pid);
+            return Err(Error::io("registering a pidfd", error));
+        }
+    };
+    Ok(Child {
+        pid,
+        pidfd,
+        reaped: Cell::new(false),
+    })
 }
 
 /// Opens /dev/null (e.g., as the stdin of background processes).
@@ -184,26 +275,36 @@ pub fn dev_null() -> Result<OwnedFd, Error> {
     Ok(unsafe { OwnedFd::from_raw_fd(fd) })
 }
 
-/// Starts a process in the background: its stdin is /dev/null, its output goes to the
-/// console (our stdout / stderr), and nobody waits for its status.
-pub fn spawn_background(command: &Command) -> Result<i32, Error> {
+/// Starts a process in the background: its stdin is /dev/null and its output goes to the
+/// console (our stdout / stderr). A task waits for it and logs if it fails.
+pub fn spawn_background(command: &Command) -> Result<(), Error> {
     let null = dev_null()?;
     let stdio = Stdio::Pipes {
         stdin: null.as_raw_fd(),
         stdout: 1,
         stderr: 2,
     };
-    // Nobody registers it, so the reaper drops its status.
-    spawn(command, &stdio)
+    let child = spawn(command, &stdio)?;
+    let program = command.argv.first().unwrap_or(&command.path).clone();
+    rt::spawn(async move {
+        match child.wait().await {
+            Ok((Some(0), _)) | Ok((None, None)) => {}
+            Ok((Some(code), _)) => log!("{program} exited with {code}"),
+            Ok((None, Some(signal))) => log!("{program} was killed by signal {signal}"),
+            Err(error) => log!("{program}: {error}"),
+        }
+    })
+    .detach();
+    Ok(())
 }
 
-/// Converts a wait status to (exit code, signal).
-pub fn exit_status(status: i32) -> (Option<i32>, Option<i32>) {
-    if libc::WIFEXITED(status) {
-        (Some(libc::WEXITSTATUS(status)), None)
-    } else if libc::WIFSIGNALED(status) {
-        (None, Some(libc::WTERMSIG(status)))
-    } else {
-        (None, None)
+/// Converts the status that waitid() reports to (exit code, signal).
+fn exit_status(info: &libc::siginfo_t) -> (Option<i32>, Option<i32>) {
+    // SAFETY: waitid() filled in the fields of a child's status.
+    let status = unsafe { info.si_status() };
+    match info.si_code {
+        libc::CLD_EXITED => (Some(status), None),
+        libc::CLD_KILLED | libc::CLD_DUMPED => (None, Some(status)),
+        _ => (None, None),
     }
 }

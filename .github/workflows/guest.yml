@@ -11,13 +11,13 @@ on:
       - "**"
     paths:
       - "guest/**"
-      - "crates/midgard-init/**"
+      - "guest-crates/**"
       - "crates/midgard-protocol/**"
       - ".github/workflows/guest.yml"
   pull_request:
     paths:
       - "guest/**"
-      - "crates/midgard-init/**"
+      - "guest-crates/**"
       - "crates/midgard-protocol/**"
       - ".github/workflows/guest.yml"
   workflow_dispatch:

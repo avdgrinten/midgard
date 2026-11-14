@@ -1,0 +1,18 @@
+[package]
+name = "midgard-agent"
+version = "0.1.0"
+edition = "2024"
+description = "midgard's guest agent in the Linux VMs: runs sessions for the CLI"
+license = "MIT"
+
+[dependencies]
+anyhow = "1.0"
+async-channel = "2.5.0"
+async-executor = "1.14.1"
+async-io = "2.6.0"
+clap = { version = "4.6.7", features = ["derive"] }
+event-listener = "5"
+futures-lite = "2.6.1"
+libc = "0.2"
+midgard-protocol = { path = "../../crates/midgard-protocol", features = ["async"] }
+thiserror = "2"

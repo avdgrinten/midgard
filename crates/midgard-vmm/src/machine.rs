@@ -14,7 +14,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use async_executor::Executor;
 use event_listener::Event;
 use midgard_protocol::control::Counters;
-use midgard_protocol::guest::Ready;
+use midgard_protocol::guest::{AGENT_FILE, INIT_FILE, Ready};
 use midgard_protocol::machine::{ConsoleKind, MachineConfig};
 use midgard_protocol::{SHARE_TAG, param};
 
@@ -205,7 +205,8 @@ fn load_images(config: &MachineConfig) -> Result<(Vec<u8>, Option<Vec<u8>>)> {
                 None => None,
             };
             Some(boot::initramfs::build(
-                &read(agent, "the agent")?,
+                &read(&agent.join(INIT_FILE), "midgard-init")?,
+                &read(&agent.join(AGENT_FILE), "midgard-agent")?,
                 &guest_config,
                 waypipe.as_deref(),
             ))

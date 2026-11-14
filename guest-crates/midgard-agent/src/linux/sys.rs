@@ -63,43 +63,6 @@ pub fn mount(
     Ok(())
 }
 
-pub fn chdir(path: &str) -> Result<(), Error> {
-    // SAFETY: The path is a NUL-terminated string.
-    if unsafe { libc::chdir(cstring(path).as_ptr()) } != 0 {
-        return Err(Error::last(format!("chdir({path})")));
-    }
-    Ok(())
-}
-
-pub fn chroot(path: &str) -> Result<(), Error> {
-    // SAFETY: The path is a NUL-terminated string.
-    if unsafe { libc::chroot(cstring(path).as_ptr()) } != 0 {
-        return Err(Error::last(format!("chroot({path})")));
-    }
-    Ok(())
-}
-
-/// Makes /dev/console our stdin, stdout and stderr.
-pub fn open_console() {
-    // SAFETY: open() and dup2() only take a path and file descriptors.
-    unsafe {
-        let fd = libc::open(c"/dev/console".as_ptr(), libc::O_RDWR | libc::O_NOCTTY);
-        if fd >= 0 {
-            for target in 0..3 {
-                libc::dup2(fd, target);
-            }
-            if fd > 2 {
-                libc::close(fd);
-            }
-        }
-    }
-}
-
-pub fn set_hostname(name: &str) {
-    // SAFETY: The buffer holds `len` bytes.
-    unsafe { libc::sethostname(name.as_ptr().cast(), name.len()) };
-}
-
 /// Syncs and powers off (through ACPI; midgard then stops).
 pub fn power_off() -> ! {
     // SAFETY: These calls have no memory-safety preconditions.
@@ -157,30 +120,4 @@ pub fn accept(listener: RawFd) -> std::io::Result<RawFd> {
         return Err(std::io::Error::last_os_error());
     }
     Ok(fd)
-}
-
-/// Sets IFF_UP on a network interface.
-pub fn interface_up(name: &str) -> Result<(), Error> {
-    // SAFETY: The ioctls read and write a struct ifreq that holds the interface's name.
-    unsafe {
-        let fd = libc::socket(libc::AF_INET, libc::SOCK_DGRAM | libc::SOCK_CLOEXEC, 0);
-        if fd < 0 {
-            return Err(Error::last("socket(AF_INET)"));
-        }
-        let mut request: libc::ifreq = std::mem::zeroed();
-        for (target, byte) in request.ifr_name.iter_mut().zip(name.bytes()) {
-            *target = byte as libc::c_char;
-        }
-        let mut result = libc::ioctl(fd, libc::SIOCGIFFLAGS as libc::Ioctl, &mut request);
-        if result == 0 {
-            request.ifr_ifru.ifru_flags |= libc::IFF_UP as libc::c_short;
-            result = libc::ioctl(fd, libc::SIOCSIFFLAGS as libc::Ioctl, &request);
-        }
-        let error = Error::last(format!("bringing up {name}"));
-        libc::close(fd);
-        if result != 0 {
-            return Err(error);
-        }
-    }
-    Ok(())
 }

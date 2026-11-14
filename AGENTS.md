@@ -8,6 +8,15 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 ```
 
+The same goes for the guest's crates, which are a workspace of their own in `guest-crates/`:
+
+```
+cd guest-crates
+cargo fmt --all --check
+cargo clippy --workspace --target x86_64-unknown-linux-musl --locked -- -D warnings
+cargo test --workspace --locked
+```
+
 This applies to each commit individually, not only to the tip of a branch, such that
 `git bisect` works and CI is green on any commit.
 
@@ -20,10 +29,11 @@ The commit message convention follows Managarm's.
 ```
 
 Modules describe where the change is made:
-- `bifrost`, `midgard`, `midgard-hv`, `midgard-protocol`, `midgard-vmm`, `midgard-init`: the crate of that name in `crates/`.
+- `bifrost`, `midgard`, `midgard-hv`, `midgard-protocol`, `midgard-vmm`: the crate of that name in `crates/`.
+- `midgard-init`, `midgard-agent`: the crate of that name in `guest-crates/`.
 - `guest`: the guest configuration in `guest/` (e.g. the Linux kernel config).
 - `ci`: the CI workflow in `.github/`.
-- `build`: the Cargo workspace (`Cargo.toml`, `Cargo.lock`).
+- `build`: the Cargo workspaces (`Cargo.toml`, `Cargo.lock` and the same in `guest-crates/`).
 - `meta`: meta changes, like this file or a README update.
 
 If a commit spans multiple modules, list them separated by commas, e.g.

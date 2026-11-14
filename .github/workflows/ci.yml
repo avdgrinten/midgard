@@ -16,21 +16,22 @@ jobs:
           targets: x86_64-unknown-linux-musl
       - name: rustfmt
         run: cargo fmt --all --check
-      # midgard-init is not part of the workspace (see Cargo.toml).
-      - name: rustfmt (midgard-init)
-        working-directory: crates/midgard-init
-        run: cargo fmt --check
+      # The guest's crates are a workspace of their own (see guest-crates/Cargo.toml).
+      - name: rustfmt (guest)
+        working-directory: guest-crates
+        run: cargo fmt --all --check
       - name: clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      # midgard-init only does anything on Linux guests, where it is a static musl binary.
-      - name: clippy (midgard-init, musl)
-        working-directory: crates/midgard-init
-        run: cargo clippy --target x86_64-unknown-linux-musl --locked -- -D warnings
+      # The guest's crates only do anything on Linux guests, where they are static musl
+      # binaries.
+      - name: clippy (guest, musl)
+        working-directory: guest-crates
+        run: cargo clippy --workspace --target x86_64-unknown-linux-musl --locked -- -D warnings
       - name: test
         run: cargo test --workspace --locked
-      - name: test (midgard-init)
-        working-directory: crates/midgard-init
-        run: cargo test --locked
-      - name: build midgard-init (musl)
-        working-directory: crates/midgard-init
-        run: cargo build --release --target x86_64-unknown-linux-musl --locked
+      - name: test (guest)
+        working-directory: guest-crates
+        run: cargo test --workspace --locked
+      - name: build (guest, musl)
+        working-directory: guest-crates
+        run: cargo build --workspace --release --target x86_64-unknown-linux-musl --locked

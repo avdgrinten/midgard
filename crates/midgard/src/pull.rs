@@ -637,7 +637,7 @@ mod tests {
         )
     }
 
-    /// A channel in `dir` with the boot files linux (whose agent is `agent`) and the
+    /// A channel in `dir` with the boot files linux (whose midgard-init is `agent`) and the
     /// template alpine.
     fn channel(dir: &Path, agent: &[u8], protocol: u32) -> Source {
         let channel = dir.join("channel");
@@ -658,12 +658,15 @@ mod tests {
                 "comment": "what a newer channel may add",
                 "boot": {{"linux": {{
                     "protocol": {{"oldest": {protocol}, "current": {protocol}}},
-                    "files": {{"vmlinuz": {{{}}}, "midgard-init": {{{}}}}}
+                    "files": {{
+                        "vmlinuz": {{{}}}, "midgard-init": {{{}}}, "midgard-agent": {{{}}}
+                    }}
                 }}}},
                 "templates": {{"alpine": {{{}, "description": "Alpine", "boot": "linux"}}}}
             }}"#,
             publish(&channel, "vmlinuz", b"kernel"),
             publish(&channel, "midgard-init", agent),
+            publish(&channel, "midgard-agent", b"midgard-agent"),
             publish(&channel, "alpine.tar", &template),
         );
         std::fs::write(channel.join(CHANNEL_FILE), text).unwrap();

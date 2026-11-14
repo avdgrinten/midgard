@@ -7,9 +7,8 @@ members = [
     "crates/midgard-protocol",
     "crates/midgard-vmm",
 ]
-# midgard-init deliberately isn't part of the workspace because
-# it gets built separately as a statically linked musl binary.
-exclude = ["crates/midgard-init"]
+# The guest's crates are a workspace of their own (see guest-crates/Cargo.toml).
+exclude = ["guest-crates"]
 
 [workspace.dependencies]
 anyhow = "1.0"

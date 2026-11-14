@@ -1,6 +1,7 @@
 //! The interface between bifrost (the CLI), midgard (the VMM daemon) and the guest
-//! agent (midgard-init): bifrost decides how a VM looks ([`machine::MachineConfig`]) and
-//! asks midgard to run it (see [`control`]) on midgard's socket (see [`runtime`]);
+//! agent (midgard-init and midgard-agent): bifrost decides how a VM looks
+//! ([`machine::MachineConfig`]) and asks midgard to run it (see [`control`]) on
+//! midgard's socket (see [`runtime`]);
 //! bifrost and the agent speak the session protocol (see [`session`]); midgard tells the
 //! agent how to set up the guest (see [`guest`]). It also has the constants that both
 //! sides of the VM need to agree on, and how sizes are written (see [`size`]).
@@ -148,7 +149,7 @@ mod tests {
         let config = MachineConfig {
             kernel: "/boot/bzImage".into(),
             initrd: None,
-            agent: Some("/usr/lib/midgard/midgard-init".into()),
+            agent: Some("/usr/lib/midgard".into()),
             cmdline: None,
             append: vec!["quiet".into(), "loglevel=3".into()],
             memory: 2 << 30,

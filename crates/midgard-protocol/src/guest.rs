@@ -13,6 +13,12 @@ use crate::version::{Hello, Mismatch, Versions};
 /// The name of the guest configuration in the initramfs.
 pub const CONFIG_FILE: &str = "guest-config";
 
+/// The agent's files (in the directory of [`crate::machine::MachineConfig::agent`]):
+/// midgard-init, which the initramfs runs as /init (PID 1), and midgard-agent, which the
+/// initramfs has under the same name.
+pub const INIT_FILE: &str = "midgard-init";
+pub const AGENT_FILE: &str = "midgard-agent";
+
 /// The contents of [`CONFIG_FILE`].
 pub fn encode_config(config: &GuestConfig) -> io::Result<Vec<u8>> {
     let mut file = Vec::new();
@@ -56,18 +62,44 @@ pub fn read_config(reader: &mut impl Read) -> Result<(u32, GuestConfig), ConfigE
     Ok((version, config))
 }
 
+// What midgard-init puts into /run/midgard in the guest (/run is a tmpfs). The files of
+// templates (and of the instances created from them) name the helper, and they stay as
+// they are when the agent changes: the helper's path and its modes must keep working.
+// The rest is in a directory of its own and may change with every version of the agent.
+
+/// What the guest runs to reach the agent: midgard-agent under another name, under which
+/// it only has the guest's modes (e.g., `/run/midgard/midgard-helper ready`).
+pub const HELPER_PATH: &str = "/run/midgard/midgard-helper";
+/// The helper under the name that it had before midgard-agent existed (midgard-init had
+/// the guest's modes): the files of older templates run it.
+pub const OLD_HELPER_PATH: &str = "/run/midgard/midgard-init";
+/// The files that only midgard-init and the agent use. The guest must not rely on them.
+pub const PRIVATE_DIR: &str = "/run/midgard/private";
+/// midgard-agent in the guest (from the initramfs).
+pub const AGENT_PATH: &str = "/run/midgard/private/midgard-agent";
+/// [`CONFIG_FILE`] in the guest (as midgard wrote it).
+pub const CONFIG_PATH: &str = "/run/midgard/private/guest-config";
+/// The socket that the helper's `ready` connects to (the agent listens on it).
+pub const NOTIFY_SOCKET: &str = "/run/midgard/private/notify";
+/// The guest's waypipe in the guest (from the initramfs, if midgard offers one).
+pub const WAYPIPE_PATH: &str = "/run/midgard/private/waypipe";
+/// Exists if the guest's waypipe logs debug messages (see [`GuestConfig::waypipe_debug`]).
+pub const WAYPIPE_DEBUG_PATH: &str = "/run/midgard/private/waypipe-debug";
+/// The Wayland display's name in a user's runtime directory.
+pub const WAYLAND_DISPLAY: &str = "wayland-0";
+
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GuestConfig {
-    /// The distribution's init (an absolute path in the guest), which the agent executes
-    /// as PID 1 once it set up the guest; the agent keeps running as its child. Without
-    /// it, the agent stays PID 1 and no services run.
+    /// The distribution's init (an absolute path in the guest), which midgard-init
+    /// executes as PID 1 once it set up the guest and started the agent. Without it,
+    /// midgard-init stays PID 1 and no services run.
     pub init: Option<String>,
     /// How sessions wait for the distribution's init to finish booting.
     pub ready: Ready,
     /// The user that sessions run as unless they name one (root if absent).
     pub user: Option<String>,
-    /// A command that the agent runs on every boot (as root, before the distribution's
+    /// A command that midgard-init runs on every boot (as root, before the distribution's
     /// init) with [`GuestConfig::user`] as an additional argument, e.g., to create the
     /// user. It must do nothing if there is nothing to do.
     pub user_setup: Option<Vec<String>>,
@@ -82,11 +114,11 @@ pub struct GuestConfig {
 
 /// Who starts the guest's Wayland display: a waypipe server that runs as a user and
 /// listens on `$XDG_RUNTIME_DIR/wayland-0` (or another socket).
-/// `/run/midgard/midgard-init waypipe [<socket>]` runs it (with the right options; it
+/// `/run/midgard/midgard-helper waypipe [<socket>]` runs it (with the right options; it
 /// connects to [`crate::WAYPIPE_PORT`] for each client).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum Display {
-    /// The agent, for the default user (on a socket in /run/midgard). Sessions of that
+    /// The agent, for the default user (on a socket in [`PRIVATE_DIR`]). Sessions of that
     /// user get `WAYLAND_DISPLAY` and `XDG_RUNTIME_DIR`.
     #[default]
     Agent,
@@ -109,7 +141,7 @@ pub enum Ready {
     Immediately,
     /// Until `systemctl is-system-running --wait` returns.
     Systemd,
-    /// Until root in the guest runs `/run/midgard/midgard-init ready` (e.g., from its
+    /// Until root in the guest runs `/run/midgard/midgard-helper ready` (e.g., from its
     /// init's configuration, after the services started).
     Notify,
 }
@@ -127,13 +159,13 @@ pub enum Launcher {
     Systemd,
     /// Through a command of the guest that opens a session for the user and runs a
     /// program as the user (e.g., `runuser -l {user} -s {helper}`). `{user}` stands for
-    /// the user's name and `{helper}` for the agent's executable in the guest, which the
+    /// the user's name and `{helper}` for the helper ([`HELPER_PATH`]), which the
     /// command must run with the file descriptors that it got (see [`Launch`]); commands
     /// that close them (e.g., sudo) do not work.
     Wrapper(Vec<String>),
 }
 
-/// What the agent's executable runs when [`Launcher::Wrapper`] runs it in the user's
+/// What the helper runs when [`Launcher::Wrapper`] runs it in the user's
 /// session. The agent passes it as one frame (see [`crate::write_message`]) in file
 /// descriptor [`LAUNCH_FD`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

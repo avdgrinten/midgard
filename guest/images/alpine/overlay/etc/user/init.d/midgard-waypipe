@@ -1,7 +1,7 @@
 #!/sbin/openrc-run
 # The Wayland display, as an OpenRC user service (`display = "guest"`).
 description="Wayland forwarding to midgard's host"
-command=/run/midgard/midgard-init
+command=/run/midgard/midgard-helper
 command_args=waypipe
 command_background=yes
 pidfile="$XDG_RUNTIME_DIR/midgard-waypipe.pid"

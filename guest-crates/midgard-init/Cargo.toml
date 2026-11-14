@@ -1,0 +1,12 @@
+[package]
+name = "midgard-init"
+version = "0.1.0"
+edition = "2024"
+description = "PID 1 of midgard's Linux VMs: sets up the guest and starts midgard-agent"
+license = "MIT"
+
+[dependencies]
+anyhow = "1.0"
+libc = "0.2"
+midgard-protocol = { path = "../../crates/midgard-protocol" }
+thiserror = "2"

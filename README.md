@@ -8,7 +8,8 @@ The Migard repository consists of:
 
 - `bifrost`: the command line client.
 - `midgard`: the daemon that runs the VMs (usually launched by systemd socket activation).
-- `midgard-init`: the agent that runs in the guest.
+- `midgard-init`: PID 1 of the guest, which sets it up and starts `midgard-agent`.
+- `midgard-agent`: the agent that runs in the guest.
 
 Guests are x86_64 Linux. Templates exist for: Alpine, Arch and Debian.
 
