@@ -30,7 +30,7 @@ The commit message convention follows Managarm's.
 
 Modules describe where the change is made:
 - `bifrost`, `midgard`, `midgard-hv`, `midgard-protocol`, `midgard-vmm`: the crate of that name in `crates/`.
-- `midgard-init`: the crate of that name in `guest-crates/`.
+- `midgard-init`, `midgard-agent`: the crate of that name in `guest-crates/`.
 - `guest`: the guest configuration in `guest/` (e.g. the Linux kernel config).
 - `ci`: the CI workflow in `.github/`.
 - `build`: the Cargo workspaces (`Cargo.toml`, `Cargo.lock` and the same in `guest-crates/`).
