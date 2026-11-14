@@ -10,7 +10,8 @@ use crate::guest::GuestConfig;
 /// sends it to midgard when it launches midgard (see [`crate::write_message`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MachineConfig {
-    /// The guest kernel (a bzImage).
+    /// The guest kernel: a bzImage, or an ELF image that boots through multiboot2 (e.g.,
+    /// Managarm's eir).
     pub kernel: PathBuf,
     pub initrd: Option<PathBuf>,
     /// Boot midgard-init (from this file) as the guest's agent.

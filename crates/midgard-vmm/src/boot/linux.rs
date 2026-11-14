@@ -128,7 +128,7 @@ const _: () = {
     assert!(SETUP_HEADER + offset_of!(SetupHeader, init_size) == 0x260);
 };
 
-/// Loads the kernel (and initrd) and writes all structures that the guest needs at entry;
+/// Loads the kernel (and initrd) and writes the zero page, the page tables and the GDT;
 /// returns the registers with which the boot CPU enters the kernel.
 pub(crate) fn load(
     memory: &GuestMemory,

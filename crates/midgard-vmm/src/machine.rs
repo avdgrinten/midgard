@@ -481,9 +481,10 @@ pub fn start(
     let (hypervisor, memory) = midgard_hv::create(config.memory)?;
     let tsc_hz = hypervisor.tsc_hz()?;
     log!("TSC runs at {} kHz", tsc_hz / 1000);
-    let registers = boot::load(&memory, &kernel, initrd.as_deref(), &cmdline)?;
+    let rsdp = acpi::write(&memory, platform::ACPI_TABLES, cpus)
+        .context("failed to write the ACPI tables")?;
+    let registers = boot::load(&memory, &kernel, initrd.as_deref(), &cmdline, &rsdp)?;
     drop((kernel, initrd));
-    acpi::write(&memory, platform::ACPI_TABLES, cpus).context("failed to write the ACPI tables")?;
 
     let board = Arc::new(Board::new(
         memory,

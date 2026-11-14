@@ -200,7 +200,7 @@ pub struct CountersArgs {
 
 #[derive(Debug, Args)]
 pub struct BootArgs {
-    /// The guest kernel (a bzImage)
+    /// The guest kernel (a bzImage or a multiboot2 ELF image)
     #[arg(long, value_name = "FILE")]
     pub kernel: PathBuf,
 

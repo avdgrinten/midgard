@@ -471,8 +471,13 @@ fn mcfg() -> Vec<u8> {
 }
 
 /// Writes the tables to `address`, with the RSDP first (16-byte aligned, such that Linux
-/// also finds it when it scans the BIOS area).
-pub(crate) fn write(memory: &GuestMemory, address: u64, num_cpus: u32) -> Result<(), MemoryError> {
+/// also finds it when it scans the BIOS area). Returns the RSDP, for boot protocols that
+/// hand the guest a copy of it.
+pub(crate) fn write(
+    memory: &GuestMemory,
+    address: u64,
+    num_cpus: u32,
+) -> Result<Vec<u8>, MemoryError> {
     let mut layout = Layout {
         base: address,
         bytes: vec![0u8; size_of::<Rsdp>()],
@@ -502,5 +507,6 @@ pub(crate) fn write(memory: &GuestMemory, address: u64, num_cpus: u32) -> Result
     rsdp.extended_checksum = checksum(rsdp.as_bytes());
     layout.bytes[..size_of::<Rsdp>()].copy_from_slice(rsdp.as_bytes());
 
-    memory.write(address, &layout.bytes)
+    memory.write(address, &layout.bytes)?;
+    Ok(rsdp.as_bytes().to_vec())
 }

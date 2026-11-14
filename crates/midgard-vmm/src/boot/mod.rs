@@ -1,5 +1,7 @@
-//! Loading the guest kernel and the state in which the boot CPU enters it.
+//! Loading the guest kernel and the state in which the boot CPU enters it, by the boot
+//! protocol of the kernel image.
 
+use anyhow::Result;
 use midgard_hv::x86::RFLAGS_FIXED;
 use midgard_hv::{DescriptorTable, GuestMemory, Regs, Segment};
 
@@ -8,8 +10,29 @@ use crate::platform::{HIGH_MEMORY, LEGACY_HOLE, PCI_ECAM_BASE};
 
 pub(crate) mod initramfs;
 mod linux;
+mod multiboot2;
 
-pub(crate) use linux::load;
+/// Loads the kernel (and initrd) and writes all structures that the guest needs at entry;
+/// returns the registers with which the boot CPU enters the kernel. `rsdp` is the ACPI
+/// RSDP (for protocols that hand the kernel a copy of it).
+///
+/// The image's format decides the protocol, and the protocol only how the kernel is
+/// loaded and entered; it does not say which operating system the guest is.
+pub(crate) fn load(
+    memory: &GuestMemory,
+    kernel: &[u8],
+    initrd: Option<&[u8]>,
+    cmdline: &str,
+    rsdp: &[u8],
+) -> Result<Regs> {
+    // ELF images boot through multiboot2 (e.g., Managarm's eir). Everything else has to
+    // be a bzImage (loading it fails otherwise).
+    if kernel.starts_with(multiboot2::ELF_MAGIC) {
+        multiboot2::load(memory, kernel, initrd, cmdline, rsdp)
+    } else {
+        linux::load(memory, kernel, initrd, cmdline)
+    }
+}
 
 // The types of the memory map's entries (the E820 types, which the boot protocols share).
 const MEMORY_RAM: u32 = 1;
