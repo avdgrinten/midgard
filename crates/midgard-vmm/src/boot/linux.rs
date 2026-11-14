@@ -7,14 +7,14 @@ use std::mem::offset_of;
 use anyhow::{Context, Result, bail};
 use midgard_hv::x86::{
     CR0_ET, CR0_MP, CR0_NE, CR0_PE, CR0_PG, CR4_PAE, EFER_LMA, EFER_LME, PTE_LARGE, PTE_PRESENT,
-    PTE_WRITABLE, RFLAGS_FIXED,
+    PTE_WRITABLE,
 };
-use midgard_hv::{DescriptorTable, GuestMemory, MemoryError, Regs, Segment};
+use midgard_hv::{DescriptorTable, GuestMemory, MemoryError, Regs};
 use zerocopy::little_endian::{U16, U32, U64};
 use zerocopy::{FromBytes, FromZeros, Immutable, IntoBytes, KnownLayout};
 
-use crate::pci;
-use crate::platform::{ACPI_TABLES, HIGH_MEMORY, LEGACY_HOLE, PCI_ECAM_BASE};
+use super::{initial_registers, memory_map, segment};
+use crate::platform::{ACPI_TABLES, HIGH_MEMORY};
 
 // Guest-physical layout of the boot structures (all below 1 MiB).
 const GDT_ADDRESS: u64 = 0x500;
@@ -35,9 +35,6 @@ const XLF_KERNEL_64: u16 = 1 << 0;
 const MIN_VERSION: u16 = 0x20C;
 /// type_of_loader: "undefined".
 const LOADER_UNDEFINED: u8 = 0xFF;
-
-const E820_RAM: u32 = 1;
-const E820_RESERVED: u32 = 2;
 
 // Selectors of the boot GDT (__BOOT_CS and __BOOT_DS in Linux).
 const BOOT_CS: u16 = 0x10;
@@ -131,20 +128,14 @@ const _: () = {
     assert!(SETUP_HEADER + offset_of!(SetupHeader, init_size) == 0x260);
 };
 
-/// The register state in which the guest starts.
-pub(crate) struct EntryState {
-    pub rip: u64,
-    pub rsi: u64,
-    pub cr3: u64,
-}
-
-/// Loads the kernel (and initrd) and writes all structures that the guest needs at entry.
+/// Loads the kernel (and initrd) and writes all structures that the guest needs at entry;
+/// returns the registers with which the boot CPU enters the kernel.
 pub(crate) fn load(
     memory: &GuestMemory,
     kernel: &[u8],
     initrd: Option<&[u8]>,
     cmdline: &str,
-) -> Result<EntryState> {
+) -> Result<Regs> {
     let header = kernel
         .get(SETUP_HEADER..)
         .and_then(|bytes| SetupHeader::ref_from_prefix(bytes).ok())
@@ -224,12 +215,7 @@ pub(crate) fn load(
         hdr.ramdisk_size.set(size as u32);
     }
 
-    let e820 = [
-        (0, LEGACY_HOLE, E820_RAM),
-        (LEGACY_HOLE, HIGH_MEMORY - LEGACY_HOLE, E820_RESERVED),
-        (HIGH_MEMORY, memory.size() - HIGH_MEMORY, E820_RAM),
-        (PCI_ECAM_BASE, pci::ECAM_SIZE, E820_RESERVED),
-    ];
+    let e820 = memory_map(memory);
     for (entry, (address, size, kind)) in zero_page.e820_table.iter_mut().zip(e820) {
         *entry = E820Entry {
             address: address.into(),
@@ -251,12 +237,8 @@ pub(crate) fn load(
         .write_obj(GDT_ADDRESS, &gdt)
         .context("failed to write the GDT")?;
 
-    Ok(EntryState {
-        // startup_64 is 0x200 bytes into the protected-mode kernel.
-        rip: KERNEL_ADDRESS + 0x200,
-        rsi: ZERO_PAGE_ADDRESS,
-        cr3: PML4_ADDRESS,
-    })
+    // startup_64 is 0x200 bytes into the protected-mode kernel.
+    Ok(entry_registers(KERNEL_ADDRESS + 0x200))
 }
 
 /// Identity maps the first 4 GiB: the protocol requires that the kernel, the zero page
@@ -276,31 +258,12 @@ fn write_page_tables(memory: &GuestMemory) -> Result<(), MemoryError> {
     Ok(())
 }
 
-fn segment(selector: u16, type_: u8, s: u8, l: u8, db: u8) -> Segment {
-    Segment {
-        base: 0,
-        limit: 0xFFFF_FFFF,
-        selector,
-        type_,
-        present: 1,
-        dpl: 0,
-        db,
-        s,
-        l,
-        g: 1,
-        avl: 0,
-        unusable: 0,
-    }
-}
-
 /// The initial register state of the boot CPU: long mode with paging, the boot GDT
 /// and RSI pointing to the zero page.
-pub(crate) fn entry_registers(entry: &EntryState) -> Regs {
-    let mut regs = Regs::default();
-    regs.basic.rip = entry.rip;
-    regs.basic.rsi = entry.rsi;
-    // Interrupts are disabled.
-    regs.basic.rflags = RFLAGS_FIXED;
+fn entry_registers(rip: u64) -> Regs {
+    let mut regs = initial_registers();
+    regs.basic.rip = rip;
+    regs.basic.rsi = ZERO_PAGE_ADDRESS;
 
     // Code: execute/read, accessed. Data: read/write, accessed.
     regs.cs = segment(BOOT_CS, 0xB, 1, 1, 0);
@@ -310,43 +273,13 @@ pub(crate) fn entry_registers(entry: &EntryState) -> Regs {
     regs.fs = data;
     regs.gs = data;
     regs.ss = data;
-    // VM entry requires a busy 64-bit TSS; Linux loads its own TR before it needs one.
-    regs.tr = Segment {
-        base: 0,
-        limit: 0x67,
-        selector: 0,
-        type_: 0xB,
-        present: 1,
-        dpl: 0,
-        db: 0,
-        s: 0,
-        l: 0,
-        g: 0,
-        avl: 0,
-        unusable: 0,
-    };
-    regs.ldt = Segment {
-        base: 0,
-        limit: 0xFFFF,
-        selector: 0,
-        type_: 0x2,
-        present: 1,
-        dpl: 0,
-        db: 0,
-        s: 0,
-        l: 0,
-        g: 0,
-        avl: 0,
-        unusable: 1,
-    };
     regs.gdt = DescriptorTable {
         base: GDT_ADDRESS,
         limit: 4 * 8 - 1,
     };
-    regs.idt = DescriptorTable { base: 0, limit: 0 };
 
     regs.cr0 = CR0_PE | CR0_MP | CR0_ET | CR0_NE | CR0_PG;
-    regs.cr3 = entry.cr3;
+    regs.cr3 = PML4_ADDRESS;
     regs.cr4 = CR4_PAE;
     regs.efer = EFER_LME | EFER_LMA;
     regs
