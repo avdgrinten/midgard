@@ -319,7 +319,7 @@ const POWEROFF_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Stops all processes, unmounts everything and powers off.
 async fn shutdown() {
-    if super::init_runs() {
+    if super::config().init.is_some() {
         // The distribution's init stops its services and powers off (and kills us on the
         // way). If it does not within the timeout, we do it ourselves.
         log!("asking init to power off");

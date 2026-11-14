@@ -1,5 +1,6 @@
-//! Boot: mount the root file system, move into it, start the distribution's init (if
-//! the guest configuration names one) and serve sessions.
+//! Boot: mount the root file system, move into it, start the agent (which serves
+//! sessions) in a child process and the distribution's init (if the guest configuration
+//! names one).
 
 mod display;
 mod launcher;
@@ -13,9 +14,8 @@ mod users;
 
 use std::fs::File;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
@@ -38,22 +38,6 @@ static CONFIG: OnceLock<GuestConfig> = OnceLock::new();
 
 pub fn config() -> &'static GuestConfig {
     CONFIG.get_or_init(GuestConfig::default)
-}
-
-/// Whether we started the distribution's init (and are its child).
-static INIT_RUNS: AtomicBool = AtomicBool::new(false);
-
-/// Whether the distribution's init runs as PID 1 (and we are its child).
-pub fn init_runs() -> bool {
-    // If executing the init failed, PID 1 is still us.
-    INIT_RUNS.load(Ordering::Relaxed) && !same_file("/proc/1/exe", "/proc/self/exe")
-}
-
-fn same_file(a: &str, b: &str) -> bool {
-    match (std::fs::metadata(a), std::fs::metadata(b)) {
-        (Ok(a), Ok(b)) => (a.dev(), a.ino()) == (b.dev(), b.ino()),
-        _ => false,
-    }
 }
 
 /// Logs a line to the console, in one write: the distribution's init writes there, too.
@@ -89,7 +73,7 @@ pub fn main() {
             println!("{OLDEST_PROTOCOL} {PROTOCOL}");
             Ok(())
         }
-        Some(mode) => Err(format!("unknown mode {mode:?} (the agent runs as PID 1)")),
+        Some(mode) => Err(format!("unknown mode {mode:?}")),
     };
     if let Err(error) = result {
         eprintln!("midgard-init: {error}");
@@ -156,26 +140,27 @@ fn boot() -> Result<()> {
     drop(waypipe);
     let watcher = ready::Watcher::new(config.ready);
 
-    // With the distribution's init, it becomes PID 1 and we continue as its child. We
-    // are still single-threaded here, which makes fork() safe.
-    if let Some(init) = &config.init {
-        // SAFETY: fork() in a single-threaded process.
-        match unsafe { libc::fork() } {
-            -1 => bail!("fork(): {}", std::io::Error::last_os_error()),
-            0 => {
-                INIT_RUNS.store(true, Ordering::Relaxed);
-                // SAFETY: setsid() has no preconditions; it detaches us from init's
-                // session and process group.
-                unsafe { libc::setsid() };
-                if let Err(error) = agent(watcher, agent_display) {
-                    log!("{error:#}");
-                }
-                std::process::exit(1);
+    // The agent runs in a child process, such that it is never PID 1 (and only waits for
+    // its own children). We are still single-threaded here, which makes fork() safe.
+    // SAFETY: fork() in a single-threaded process.
+    let agent_pid = match unsafe { libc::fork() } {
+        -1 => bail!("fork(): {}", std::io::Error::last_os_error()),
+        0 => {
+            // SAFETY: setsid() has no preconditions; it detaches the agent from PID 1's
+            // session and process group.
+            unsafe { libc::setsid() };
+            if let Err(error) = agent(watcher, agent_display) {
+                log!("{error:#}");
             }
-            _ => exec_init(init),
+            std::process::exit(1);
         }
+        pid => pid,
+    };
+    // With the distribution's init, it becomes PID 1 (and the agent its child).
+    if let Some(init) = &config.init {
+        exec_init(init);
     }
-    agent(watcher, agent_display)
+    reap(agent_pid)
 }
 
 /// Reads the guest configuration from the initramfs (before we leave it). Fails if
@@ -255,8 +240,8 @@ fn user_setup(config: &GuestConfig) {
     }
 }
 
-/// Serves sessions (as PID 1 or as a child of the distribution's init) and runs the
-/// Wayland display for the default user (with `agent_display`, see [`Display::Agent`]).
+/// Serves sessions (in a child process of PID 1) and runs the Wayland display for the
+/// default user (with `agent_display`, see [`Display::Agent`]).
 /// One thread runs everything (see [`rt`]).
 fn agent(watcher: ready::Watcher, agent_display: bool) -> Result<()> {
     // Before any thread starts (async-io starts one).
@@ -278,9 +263,8 @@ fn agent(watcher: ready::Watcher, agent_display: bool) -> Result<()> {
     })
 }
 
-/// Replaces PID 1 with the distribution's init. If that fails, PID 1 only reaps orphans
-/// (the agent already runs).
-fn exec_init(init: &str) -> ! {
+/// Replaces PID 1 with the distribution's init. Returns if that fails.
+fn exec_init(init: &str) {
     log!("starting {init}");
     // Rust ignores SIGPIPE; the ignored disposition would survive exec.
     // SAFETY: signal() only takes numbers.
@@ -291,11 +275,24 @@ fn exec_init(init: &str) -> ! {
     // SAFETY: argv and env are NULL-terminated arrays of NUL-terminated strings.
     unsafe { libc::execve(path.as_ptr(), argv.as_ptr(), env.as_ptr()) };
     log!("executing {init}: {}", std::io::Error::last_os_error());
+}
+
+/// PID 1 without the distribution's init: reaps orphans until the agent exits, then
+/// powers off (midgard sees the VM stop).
+fn reap(agent: libc::pid_t) -> ! {
     loop {
         let mut status = 0;
         // SAFETY: waitpid() only writes the status.
-        if unsafe { libc::waitpid(-1, &mut status, 0) } < 0 {
+        let pid = unsafe { libc::waitpid(-1, &mut status, 0) };
+        if pid < 0 {
             std::thread::sleep(Duration::from_secs(1));
+        } else if pid == agent {
+            if libc::WIFSIGNALED(status) {
+                log!("the agent was killed by signal {}", libc::WTERMSIG(status));
+            } else {
+                log!("the agent exited with {}", libc::WEXITSTATUS(status));
+            }
+            sys::power_off();
         }
     }
 }
