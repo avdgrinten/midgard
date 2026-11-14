@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
 """Builds midgard's guest files on a Linux host: the guest kernel (vmlinuz), which midgard
-boots with the agent (midgard-init) and the guest's waypipe in the initramfs, and the
-distributions' disk images.
+boots with the agent (midgard-init and midgard-agent) and the guest's waypipe in the
+initramfs, and the distributions' disk images.
 
     build.py build <target>... [-o <dir>]
     build.py targets [--changed-since <commit>]
 
 The targets are `kernel` (guest/kernel.toml and guest/linux.config), `agent`
-(guest-crates/midgard-init as a static binary, with the versions of the guest protocol that it
-speaks in agent.json), `waypipe` (guest/waypipe.toml, a static binary, too) and the images
-in guest/images/<name>: image.toml says how to bootstrap the root file system, the files in
-overlay/ are copied into it, and `provision`, a shell script, runs in a chroot of it (as
-root, with the network), e.g., to install packages. An image is midgard's template <name>:
-<name>.tar with the template's directory, <name>/disk.qcow2.zst (its sparse 64 GiB ext4
-file system as a qcow2 image, compressed with zstd) and <name>/template.toml (the settings
-of the VM instances that midgard creates from it).
+(guest-crates/midgard-init and guest-crates/midgard-agent as static binaries, with the
+versions of the guest protocol that they speak in agent.json), `waypipe`
+(guest/waypipe.toml, a static binary, too) and the images in guest/images/<name>: image.toml
+says how to bootstrap the root file system, the files in overlay/ are copied into it, and
+`provision`, a shell script, runs in a chroot of it (as root, with the network), e.g., to
+install packages. An image is midgard's template <name>: <name>.tar with the template's
+directory, <name>/disk.qcow2.zst (its sparse 64 GiB ext4 file system as a qcow2 image,
+compressed with zstd) and <name>/template.toml (the settings of the VM instances that
+midgard creates from it).
 
 `build` builds targets into the output directory, with <target>.json, which lists their
 files with their SHA-256 and what they were built from, and channel.json, which makes the
@@ -73,6 +74,8 @@ BOOT_FILES = "linux"
 RUST_TARGET = "x86_64-unknown-linux-musl"
 CRATES = REPO / "crates"
 GUEST_CRATES = REPO / "guest-crates"
+# The crates of the agent's binaries (each one is a file of the same name).
+AGENT_CRATES = ["midgard-init", "midgard-agent"]
 
 
 class Failure(Exception):
@@ -147,9 +150,10 @@ def inputs(target):
     if target == "kernel":
         files += [GUEST / "kernel.toml", GUEST / "linux.config"]
     elif target == "agent":
-        # (With the crate of the guest protocol, which it is built with.)
+        # (With the crate of the guest protocol, which they are built with.)
         files += [GUEST_CRATES / "Cargo.toml", GUEST_CRATES / "Cargo.lock"]
-        for crate in [GUEST_CRATES / "midgard-init", CRATES / "midgard-protocol"]:
+        crates = [GUEST_CRATES / crate for crate in AGENT_CRATES] + [CRATES / "midgard-protocol"]
+        for crate in crates:
             files += [crate / "Cargo.toml"]
             files += sorted(path for path in (crate / "src").rglob("*") if path.is_file())
     elif target == "waypipe":
@@ -296,18 +300,21 @@ def cargo_build(manifest, name, *args, env={}):
 
 
 def build_agent(out):
-    """Builds midgard-init and asks it which versions of the guest protocol it speaks
-    (see crates/midgard-protocol/src/version.rs)."""
-    log("building midgard-init")
-    binary = cargo_build(GUEST_CRATES / "Cargo.toml", "guest") / "midgard-init"
-    shutil.copyfile(binary, out / "midgard-init")
-    (out / "midgard-init").chmod(0o755)
+    """Builds midgard-init and midgard-agent and asks the latter which versions of the
+    guest protocol they speak (see crates/midgard-protocol/src/version.rs)."""
+    log("building " + " and ".join(AGENT_CRATES))
+    release = cargo_build(GUEST_CRATES / "Cargo.toml", "guest")
+    for crate in AGENT_CRATES:
+        shutil.copyfile(release / crate, out / crate)
+        (out / crate).chmod(0o755)
     answer = subprocess.run(
-        [str(out / "midgard-init"), "protocol"], check=True, capture_output=True, text=True
+        [str(out / "midgard-agent"), "protocol"], check=True, capture_output=True, text=True
     ).stdout.split()
     if len(answer) != 2 or not all(version.isdecimal() for version in answer):
-        raise Failure(f"midgard-init protocol printed {' '.join(answer)!r} instead of two versions")
-    return ["midgard-init"], {"protocol": {"oldest": int(answer[0]), "current": int(answer[1])}}
+        raise Failure(
+            f"midgard-agent protocol printed {' '.join(answer)!r} instead of two versions"
+        )
+    return AGENT_CRATES, {"protocol": {"oldest": int(answer[0]), "current": int(answer[1])}}
 
 
 def build_waypipe(out):

@@ -2,16 +2,11 @@
 name = "midgard-init"
 version = "0.1.0"
 edition = "2024"
-description = "midgard's guest agent: PID 1 of the Linux VMs, runs sessions for the CLI"
+description = "PID 1 of midgard's Linux VMs: sets up the guest and starts midgard-agent"
 license = "MIT"
 
 [dependencies]
 anyhow = "1.0"
-async-channel = "2.5.0"
-async-executor = "1.14.1"
-async-io = "2.6.0"
-event-listener = "5"
-futures-lite = "2.6.1"
 libc = "0.2"
-midgard-protocol = { path = "../../crates/midgard-protocol", features = ["async"] }
+midgard-protocol = { path = "../../crates/midgard-protocol" }
 thiserror = "2"

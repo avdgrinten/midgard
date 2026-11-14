@@ -14,16 +14,13 @@ use async_channel::Sender;
 use async_io::{Async, Timer};
 use event_listener::Event;
 use futures_lite::future;
-use midgard_protocol::guest::Ready;
+use midgard_protocol::guest::{HELPER_PATH, NOTIFY_SOCKET, Ready};
 
-use super::{PATH, RUN_DIR, log, process, rt};
+use super::{PATH, log, process, rt};
 
 /// How long sessions wait for the distribution's init; then they run anyway. (And how
-/// long `midgard-init ready` waits for the agent.)
+/// long `midgard-helper ready` waits for the agent.)
 const BOOT_TIMEOUT: Duration = Duration::from_secs(120);
-
-/// The socket that `midgard-init ready` connects to (see [`Watcher`]).
-const NOTIFY_SOCKET: &str = "/run/midgard/notify";
 
 /// Whether the guest finished booting (or we gave up waiting).
 static BOOTED: AtomicBool = AtomicBool::new(false);
@@ -43,8 +40,8 @@ pub async fn wait() {
     }
 }
 
-/// What the watcher waits for, and the socket that `midgard-init ready` connects to. The
-/// socket exists in every mode, such that `midgard-init ready` does not wait for nothing
+/// What the watcher waits for, and the socket that `midgard-helper ready` connects to. The
+/// socket exists in every mode, such that `midgard-helper ready` does not wait for nothing
 /// (e.g., if the guest runs it although the configuration does not say so).
 pub struct Watcher {
     ready: Ready,
@@ -77,7 +74,7 @@ pub async fn watch(watcher: Watcher, then: impl Future<Output = ()>) {
             Some(systemd_booted(start + BOOT_TIMEOUT).await)
         }
         Ready::Notify => {
-            log!("waiting for the guest to run {RUN_DIR}/midgard-init ready");
+            log!("waiting for the guest to run {HELPER_PATH} ready");
             let notified = async { notified.recv().await.is_ok() };
             Some(
                 future::or(notified, async {
@@ -114,7 +111,7 @@ async fn systemd_booted(deadline: Instant) -> bool {
     run_with_timeout(&["systemctl", "is-system-running", "--wait"], remaining).await
 }
 
-/// Accepts (and closes) the connections of `midgard-init ready` for as long as the agent
+/// Accepts (and closes) the connections of `midgard-helper ready` for as long as the agent
 /// runs; the first one goes to `notify` (for [`Ready::Notify`]).
 async fn accept(listener: UnixListener, notify: Sender<()>) {
     let listener = match Async::new(listener) {
@@ -174,7 +171,7 @@ async fn run_with_timeout(argv: &[&str], timeout: Duration) -> bool {
     }
 }
 
-/// `midgard-init ready`: tells the agent that the guest finished booting. If the agent
+/// `midgard-helper ready`: tells the agent that the guest finished booting. If the agent
 /// does not listen yet, we wait for it, but not forever: the guest may wait for us while
 /// it boots.
 pub fn notify() -> Result<(), String> {

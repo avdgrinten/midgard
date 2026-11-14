@@ -27,11 +27,11 @@
 //! init = "/sbin/init"
 //! # How sessions wait for the guest to boot: "none" (default), "systemd" (until
 //! # `systemctl is-system-running --wait` returns) or "notify" (until the guest runs
-//! # `/run/midgard/midgard-init ready`).
+//! # `/run/midgard/midgard-helper ready`).
 //! ready = "systemd"
 //! # The user that sessions run as unless bifrost names one (default: root).
 //! user = "alice"
-//! # A command that the agent runs on every boot (as root, before the distribution's
+//! # A command that midgard-init runs on every boot (as root, before the distribution's
 //! # init) with the user's name as an additional argument, e.g., to create the user.
 //! # Instance files need a user for it; a template's user is the default.
 //! user-setup = ["/etc/midgard/user-setup"]
@@ -43,7 +43,7 @@
 //! wrapper = ["runuser", "-l", "{user}", "-s", "{helper}"]
 //! # Who starts the Wayland display for the guest's Wayland clients (with midgard's
 //! # guest-waypipe): "agent" (default: the agent, for the default user), "systemd" (the
-//! # users' systemd instances) or "guest" (the guest runs `/run/midgard/midgard-init
+//! # users' systemd instances) or "guest" (the guest runs `/run/midgard/midgard-helper
 //! # waypipe` as the user itself).
 //! display = "systemd"
 //! ```

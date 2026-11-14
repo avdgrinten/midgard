@@ -9,13 +9,13 @@ use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::process::CommandExt;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use midgard_protocol::guest::{LAUNCH_FD, Launch, Launcher};
+use midgard_protocol::guest::{HELPER_PATH, LAUNCH_FD, Launch, Launcher};
 use midgard_protocol::session::Exec;
 
 use super::process::{self, Command, Credentials};
 use super::sys::Error;
 use super::users::{self, User};
-use super::{HELPER, PATH, log};
+use super::{PATH, log};
 
 /// A session's command, ready to start.
 pub struct Prepared {
@@ -221,7 +221,7 @@ fn wrapped(wrapper: &[String], exec: &Exec, user: &User, cwd: &str) -> Result<Pr
         .iter()
         .map(|arg| {
             arg.replace("{user}", &user.name)
-                .replace("{helper}", HELPER)
+                .replace("{helper}", HELPER_PATH)
         })
         .collect();
     let program = argv
@@ -268,7 +268,7 @@ fn request(launch: &Launch) -> Result<OwnedFd, Error> {
     Ok(file.into())
 }
 
-/// `midgard-init` as the wrapper's helper (in the user's session): runs the command of
+/// `midgard-helper` as the wrapper's helper (in the user's session): runs the command of
 /// the request in [`LAUNCH_FD`]. Commands run through a POSIX login shell, such that the
 /// profile (/etc/profile and ~/.profile) sets up the session's environment, as on a
 /// login; the client's variables take precedence over the profile's.

@@ -3,11 +3,11 @@
 use midgard_protocol::guest::{AGENT_FILE, CONFIG_FILE};
 
 /// Builds an archive with /init (midgard-init), /dev/console, the directories that
-/// midgard-init mounts on, midgard-agent (if any), the guest configuration (see
+/// midgard-init mounts on, midgard-agent, the guest configuration (see
 /// [`midgard_protocol::guest`]) and the guest's waypipe (/waypipe, if any).
 pub(crate) fn build(
     init: &[u8],
-    agent: Option<&[u8]>,
+    agent: &[u8],
     guest_config: &[u8],
     waypipe: Option<&[u8]>,
 ) -> Vec<u8> {
@@ -44,9 +44,7 @@ pub(crate) fn build(
     // The kernel opens /dev/console for init before init runs.
     add("dev/console", 0o020600, (5, 1), &[]);
     add("init", 0o100755, (0, 0), init);
-    if let Some(agent) = agent {
-        add(AGENT_FILE, 0o100755, (0, 0), agent);
-    }
+    add(AGENT_FILE, 0o100755, (0, 0), agent);
     add(CONFIG_FILE, 0o100644, (0, 0), guest_config);
     if let Some(waypipe) = waypipe {
         add("waypipe", 0o100755, (0, 0), waypipe);
@@ -61,7 +59,7 @@ mod tests {
 
     #[test]
     fn layout() {
-        let archive = build(b"#!binary", Some(b"#!agent"), b"config", None);
+        let archive = build(b"#!binary", b"#!agent", b"config", None);
         assert!(archive.starts_with(b"070701"));
         assert_eq!(archive.len() % 4, 0);
         // Every entry starts at a 4-byte boundary with the magic.
@@ -74,9 +72,7 @@ mod tests {
         assert!(archive.windows(8).any(|w| w == b"#!binary"));
         assert!(archive.windows(7).any(|w| w == b"#!agent"));
         assert!(!text.contains("waypipe\0"));
-        let archive = build(b"#!binary", None, b"config", Some(b"waypipe"));
-        let text = String::from_utf8_lossy(&archive);
-        assert!(text.contains("waypipe\0"));
-        assert!(!text.contains("midgard-agent\0"));
+        let archive = build(b"#!binary", b"#!agent", b"config", Some(b"waypipe"));
+        assert!(String::from_utf8_lossy(&archive).contains("waypipe\0"));
     }
 }

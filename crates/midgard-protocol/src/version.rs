@@ -12,10 +12,14 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-/// The version of the guest protocol that this build speaks.
-pub const PROTOCOL: u32 = 1;
+/// The version of the guest protocol that this build speaks. The versions:
+///
+/// 1. The first one.
+/// 2. The initramfs has midgard-agent next to midgard-init (see
+///    [`crate::guest::AGENT_FILE`]), which midgard-init starts as the agent.
+pub const PROTOCOL: u32 = 2;
 /// The oldest version of the guest protocol that this build still speaks with a peer.
-pub const OLDEST_PROTOCOL: u32 = 1;
+pub const OLDEST_PROTOCOL: u32 = 2;
 
 /// The versions of the guest protocol that one side speaks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -13,7 +13,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
-use midgard_protocol::guest::INIT_FILE;
+use midgard_protocol::guest::{AGENT_FILE, INIT_FILE};
 use midgard_protocol::version::{Mismatch, Versions};
 use serde::{Deserialize, Serialize};
 
@@ -26,7 +26,7 @@ pub const DEFAULT: &str = "linux";
 /// The guest kernel in the boot files' directory.
 const KERNEL: &str = "vmlinuz";
 /// The files that boot files need to have.
-pub const REQUIRED: [&str; 2] = [KERNEL, INIT_FILE];
+pub const REQUIRED: [&str; 3] = [KERNEL, INIT_FILE, AGENT_FILE];
 /// The guest's waypipe (a static Linux build) in the boot files' directory.
 const WAYPIPE: &str = "guest-waypipe";
 /// The manifest in the boot files' directory.
@@ -64,6 +64,15 @@ impl BootFiles {
             .copied()
             .collect::<Vec<_>>();
         if !missing.is_empty() {
+            // (Boot files of an older version of the guest protocol lack files that we
+            // need; then the version says more.)
+            if let Ok(Manifest {
+                protocol: Some(protocol),
+                ..
+            }) = read_manifest(&dir)
+            {
+                negotiate(protocol)?;
+            }
             bail!(
                 "the boot files {name} lack {} (in {}; bifrost pull installs them)",
                 missing.join(" and "),
@@ -119,7 +128,7 @@ pub fn negotiate(agent: Versions) -> Result<u32> {
             }
             Mismatch::PeerTooNew { .. } => "is too new for this midgard: update midgard",
         };
-        anyhow!("the guest agent (midgard-init) {advice} (it speaks {mismatch})")
+        anyhow!("the guest agent {advice} (it speaks {mismatch})")
     })
 }
 
