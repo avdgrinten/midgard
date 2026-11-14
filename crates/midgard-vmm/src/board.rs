@@ -324,6 +324,8 @@ impl Board {
             // from Linux probing them.
             0x60 | 0x64 | 0x40..=0x43 | 0x61 | 0x80..=0x8F => ones,
             0x2F8..=0x2FF | 0x3E8..=0x3EF | 0x2E8..=0x2EF => ones,
+            // No debug console (of Bochs and QEMU), which Managarm probes.
+            0xE9 => ones,
             // No PCI configuration mechanism #1, such that Linux uses ECAM (see pci).
             0xCF8..=0xCFF => ones,
             _ => {

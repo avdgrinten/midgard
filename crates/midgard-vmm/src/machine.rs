@@ -30,8 +30,7 @@ use crate::virtio::vsock::{Vsock, VsockListener, VsockStream};
 use crate::virtio::{DeviceList, DeviceRef};
 use crate::{acpi, boot, platform, vcpu};
 
-/// Kernel parameters that every guest needs (unless the configuration replaces them);
-/// the console is added.
+/// Kernel parameters that every Linux guest needs; the console is added.
 const BASE_CMDLINE: &str = "reboot=k panic=-1";
 /// The default number of vCPUs: the host's CPUs, up to this many.
 const DEFAULT_MAX_CPUS: u32 = 8;
@@ -147,26 +146,34 @@ fn create_devices(config: &MachineConfig, output: &ConsoleOutput) -> Result<Devi
     })
 }
 
-/// The guest kernel's command line.
-fn kernel_cmdline(config: &MachineConfig, devices: &Devices) -> String {
-    let base = config.cmdline.as_deref().unwrap_or(BASE_CMDLINE);
+/// The guest kernel's command line: the configuration's, or else the one that a Linux
+/// guest needs. Only the latter depends on the VM; other kernels have other parameters.
+fn kernel_cmdline(config: &MachineConfig) -> String {
+    let mut cmdline = match &config.cmdline {
+        Some(cmdline) => vec![cmdline.clone()],
+        None => linux_parameters(config),
+    };
+    cmdline.extend(config.append.iter().cloned());
+    cmdline.retain(|parameters| !parameters.is_empty());
+    cmdline.join(" ")
+}
+
+/// The parameters with which a Linux kernel finds its console, its network configuration
+/// and its root file system.
+fn linux_parameters(config: &MachineConfig) -> Vec<String> {
     let console = match config.console {
         ConsoleKind::Virtio => "console=hvc0",
         ConsoleKind::Serial => "console=ttyS0",
     };
-    let mut cmdline = vec![base.to_string(), console.to_string()];
-    if devices.network.is_some() {
+    let mut cmdline = vec![BASE_CMDLINE.to_string(), console.to_string()];
+    if config.network {
         cmdline.push(net::kernel_parameter());
     }
-    let explicit_root = config
-        .cmdline
-        .iter()
-        .chain(&config.append)
-        .any(|parameters| {
-            parameters
-                .split_whitespace()
-                .any(|p| p.starts_with("root="))
-        });
+    let explicit_root = config.append.iter().any(|parameters| {
+        parameters
+            .split_whitespace()
+            .any(|p| p.starts_with("root="))
+    });
     if let Some(disk) = config.disks.first()
         && !explicit_root
     {
@@ -180,8 +187,7 @@ fn kernel_cmdline(config: &MachineConfig, devices: &Devices) -> String {
             cmdline.push(format!("root=/dev/vda {flags}"));
         }
     }
-    cmdline.extend(config.append.iter().cloned());
-    cmdline.join(" ")
+    cmdline
 }
 
 fn read(path: &Path, what: &str) -> Result<Vec<u8>> {
@@ -469,15 +475,16 @@ pub fn start(
     validate(config, cpus)?;
     let console = ConsoleOutput::new(console);
     let devices = create_devices(config, &console)?;
-    let cmdline = kernel_cmdline(config, &devices);
+    let cmdline = kernel_cmdline(config);
     let (kernel, initrd) = load_images(config)?;
 
     let (hypervisor, memory) = midgard_hv::create(config.memory)?;
     let tsc_hz = hypervisor.tsc_hz()?;
     log!("TSC runs at {} kHz", tsc_hz / 1000);
-    let entry = boot::load(&memory, &kernel, initrd.as_deref(), &cmdline)?;
+    let rsdp = acpi::write(&memory, platform::ACPI_TABLES, cpus)
+        .context("failed to write the ACPI tables")?;
+    let registers = boot::load(&memory, &kernel, initrd.as_deref(), &cmdline, &rsdp)?;
     drop((kernel, initrd));
-    acpi::write(&memory, platform::ACPI_TABLES, cpus).context("failed to write the ACPI tables")?;
 
     let board = Arc::new(Board::new(
         memory,
@@ -492,7 +499,7 @@ pub fn start(
     for id in 0..cpus {
         vcpus.push(vcpu::Vcpu::new(board.clone(), id)?);
     }
-    vcpus[0].set_registers(&boot::entry_registers(&entry))?;
+    vcpus[0].set_registers(&registers)?;
 
     log!(
         "booting {} with {} vCPU(s) and {} MiB of memory: {cmdline}",
@@ -524,4 +531,60 @@ pub fn start(
     let share = (devices.share)
         .map(|(device, backend)| fs::start(&executor, board.clone(), device, backend));
     spawn_vcpus(board, executor, disks, share, vcpus)
+}
+
+#[cfg(test)]
+mod tests {
+    use midgard_protocol::guest::GuestConfig;
+    use midgard_protocol::machine::Disk;
+
+    use super::*;
+
+    fn config(console: ConsoleKind, network: bool) -> MachineConfig {
+        MachineConfig {
+            kernel: "kernel".into(),
+            initrd: None,
+            agent: None,
+            cmdline: None,
+            append: vec!["extra".to_string()],
+            memory: 1 << 30,
+            cpus: None,
+            console,
+            disks: vec![Disk {
+                path: "disk".into(),
+                read_only: false,
+            }],
+            network,
+            share: None,
+            guest: GuestConfig::default(),
+            waypipe: None,
+        }
+    }
+
+    #[test]
+    fn command_lines() {
+        let mut config = config(ConsoleKind::Serial, true);
+        assert_eq!(
+            kernel_cmdline(&config),
+            "reboot=k panic=-1 console=ttyS0 \
+             ip=10.0.2.15::10.0.2.2:255.255.255.0:midgard:eth0:off:10.0.2.3 \
+             root=/dev/vda rw extra"
+        );
+        // With an initrd, the kernel does not mount the disk.
+        config.initrd = Some("initrd".into());
+        config.console = ConsoleKind::Virtio;
+        config.network = false;
+        assert_eq!(
+            kernel_cmdline(&config),
+            "reboot=k panic=-1 console=hvc0 extra"
+        );
+
+        // Nothing is added to the configuration's command line (but what it appends).
+        config.initrd = None;
+        config.network = true;
+        config.cmdline = Some("serial".to_string());
+        assert_eq!(kernel_cmdline(&config), "serial extra");
+        config.cmdline = Some(String::new());
+        assert_eq!(kernel_cmdline(&config), "extra");
+    }
 }
