@@ -212,6 +212,11 @@ pub struct BootArgs {
     #[arg(long, value_name = "DIR")]
     pub agent: Option<PathBuf>,
 
+    /// The guest's image has the agent, which the guest starts itself (e.g., Managarm):
+    /// give it a vsock device and midgard.agent on the kernel command line
+    #[arg(long, conflicts_with = "agent")]
+    pub agent_in_image: bool,
+
     /// The kernel's command line, instead of the one that midgard builds for a Linux
     /// guest (console, network and root file system)
     #[arg(long, value_name = "ARGS", allow_hyphen_values = true)]
@@ -471,7 +476,22 @@ mod tests {
             panic!("not boot: {:?}", cli.action);
         };
         assert_eq!(boot.agent, Some(PathBuf::from("agent")));
+        assert!(!boot.agent_in_image);
         assert!(parse(&["boot", "--kernel", "k", "--agent", "a", "--initrd", "i"]).is_err());
+        let cli = parse(&[
+            "boot",
+            "--kernel",
+            "eir",
+            "--initrd",
+            "i",
+            "--agent-in-image",
+        ])
+        .unwrap();
+        let Some(Action::Boot(boot)) = cli.action else {
+            panic!("not boot: {:?}", cli.action);
+        };
+        assert!(boot.agent_in_image);
+        assert!(parse(&["boot", "--kernel", "k", "--agent", "a", "--agent-in-image"]).is_err());
     }
 
     #[test]
