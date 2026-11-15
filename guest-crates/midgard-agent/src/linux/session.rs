@@ -310,12 +310,19 @@ async fn forward_input(
     }
 }
 
+/// Whether systemd is the guest's init (as sd_booted() tells). Guests that start the
+/// agent themselves (e.g., Managarm) have an init that midgard's configuration does not
+/// name.
+fn systemd_booted() -> bool {
+    std::path::Path::new("/run/systemd/system").is_dir()
+}
+
 /// How long the distribution's init may take to power off.
 const POWEROFF_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Stops all processes, unmounts everything and powers off.
 async fn shutdown() {
-    if super::config().init.is_some() {
+    if super::config().init.is_some() || systemd_booted() {
         // The distribution's init stops its services and powers off (and kills us on the
         // way). If it does not within the timeout, we do it ourselves.
         log!("asking init to power off");
