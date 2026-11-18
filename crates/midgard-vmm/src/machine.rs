@@ -71,9 +71,15 @@ fn validate(config: &MachineConfig, cpus: u32) -> Result<()> {
     if config.agent.is_some() && config.initrd.is_some() {
         bail!("the agent and an initrd are mutually exclusive");
     }
+    if config.agent.is_some() && config.agent_in_image {
+        bail!("midgard's agent and the guest's agent are mutually exclusive");
+    }
     if let Some(init) = &config.guest.init {
         if config.agent.is_none() {
-            bail!("the distribution's init needs the agent");
+            bail!(
+                "the distribution's init needs midgard's agent (a guest that starts the \
+                 agent itself starts its init, too)"
+            );
         }
         if !init.starts_with('/') {
             bail!("the distribution's init must be an absolute path (not {init:?})");
@@ -109,7 +115,8 @@ fn create_devices(config: &MachineConfig, output: &ConsoleOutput) -> Result<Devi
     let console =
         (config.console == ConsoleKind::Virtio).then(|| list.add(Console::new(output.clone())));
     // The agent talks to us over vsock.
-    let vsock = config.agent.is_some().then(|| list.add(Vsock::default()));
+    let vsock =
+        (config.agent.is_some() || config.agent_in_image).then(|| list.add(Vsock::default()));
     let network = config.network.then(|| {
         let (handle, from_guest) = net::channel();
         (list.add(VirtioNet::new(net::GUEST_MAC, handle)), from_guest)
@@ -148,11 +155,15 @@ fn create_devices(config: &MachineConfig, output: &ConsoleOutput) -> Result<Devi
 
 /// The guest kernel's command line: the configuration's, or else the one that a Linux
 /// guest needs. Only the latter depends on the VM; other kernels have other parameters.
+/// A guest that starts the agent itself learns from it that it should.
 fn kernel_cmdline(config: &MachineConfig) -> String {
     let mut cmdline = match &config.cmdline {
         Some(cmdline) => vec![cmdline.clone()],
         None => linux_parameters(config),
     };
+    if config.agent_in_image {
+        cmdline.push(param::AGENT.to_string());
+    }
     cmdline.extend(config.append.iter().cloned());
     cmdline.retain(|parameters| !parameters.is_empty());
     cmdline.join(" ")
@@ -552,6 +563,7 @@ mod tests {
             kernel: "kernel".into(),
             initrd: None,
             agent: None,
+            agent_in_image: false,
             cmdline: None,
             append: vec!["extra".to_string()],
             memory: 1 << 30,
@@ -593,5 +605,25 @@ mod tests {
         assert_eq!(kernel_cmdline(&config), "serial extra");
         config.cmdline = Some(String::new());
         assert_eq!(kernel_cmdline(&config), "extra");
+
+        // A guest that starts the agent itself is told to.
+        config.cmdline = Some("serial".to_string());
+        config.agent_in_image = true;
+        assert_eq!(kernel_cmdline(&config), "serial midgard.agent extra");
+    }
+
+    #[test]
+    fn agents_in_images() {
+        let mut config = config(ConsoleKind::Serial, false);
+        config.agent_in_image = true;
+        config.guest.user = Some("alice".into());
+        validate(&config, 1).unwrap();
+        // It starts its init itself.
+        config.guest.init = Some("/sbin/init".into());
+        let error = validate(&config, 1).unwrap_err().to_string();
+        assert!(error.contains("starts its init"), "{error}");
+        config.guest = GuestConfig::default();
+        config.agent = Some("agent".into());
+        assert!(validate(&config, 1).is_err());
     }
 }

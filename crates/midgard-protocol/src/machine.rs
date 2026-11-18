@@ -17,7 +17,14 @@ pub struct MachineConfig {
     /// Boot the guest's agent from this directory (see [`crate::guest::INIT_FILE`] and
     /// [`crate::guest::AGENT_FILE`]).
     pub agent: Option<PathBuf>,
-    /// The kernel's command line, to which midgard only adds `append`. None: midgard
+    /// The guest starts the agent itself (e.g., Managarm, whose image has it): midgard
+    /// gives it the vsock device, on which its agent fetches the guest configuration like
+    /// midgard's own, and [`crate::param::AGENT`] on the command line. (It starts its
+    /// init itself, too: `guest` names none.)
+    #[serde(default)]
+    pub agent_in_image: bool,
+    /// The kernel's command line, to which midgard only adds [`crate::param::AGENT`] (see
+    /// `agent_in_image`) and `append`. None: midgard
     /// builds the command line of a Linux guest (its console, its network configuration
     /// and its root file system).
     pub cmdline: Option<String>,
