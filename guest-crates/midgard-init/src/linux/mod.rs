@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use midgard_protocol::guest::{
-    self, AGENT_FILE, AGENT_PATH, GuestConfig, HELPER_PATH, OLD_HELPER_PATH, PRIVATE_DIR,
+    self, AGENT_FILE, AGENT_PATH, GuestConfig, HELPER_PATH, PRIVATE_DIR,
 };
 use midgard_protocol::version::PROTOCOL;
 use midgard_protocol::{CONFIG_PORT, HOST_CID, SHARE_MOUNT, SHARE_TAG, param};
@@ -139,8 +139,8 @@ fn load_agent() -> Result<Vec<u8>> {
     Ok(agent)
 }
 
-/// Installs the agent as [`AGENT_PATH`] and the names under which the guest runs it
-/// ([`HELPER_PATH`] and [`OLD_HELPER_PATH`]).
+/// Installs the agent as [`AGENT_PATH`] and the name under which the guest runs it
+/// ([`HELPER_PATH`]).
 fn install_agent(agent: &[u8]) {
     // (Users run the helper and waypipe.)
     let result = std::fs::DirBuilder::new()
@@ -152,10 +152,8 @@ fn install_agent(agent: &[u8]) {
     if let Err(error) = result {
         log!("installing {AGENT_PATH}: {error}");
     }
-    for helper in [HELPER_PATH, OLD_HELPER_PATH] {
-        if let Err(error) = std::os::unix::fs::symlink(AGENT_PATH, helper) {
-            log!("creating {helper}: {error}");
-        }
+    if let Err(error) = std::os::unix::fs::symlink(AGENT_PATH, HELPER_PATH) {
+        log!("creating {HELPER_PATH}: {error}");
     }
 }
 

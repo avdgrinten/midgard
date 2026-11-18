@@ -21,17 +21,12 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use async_io::{Async, Timer};
 use clap::{Parser, Subcommand};
-use midgard_protocol::guest::{
-    self, Display, GuestConfig, HELPER_PATH, OLD_HELPER_PATH, WAYPIPE_PATH,
-};
+use midgard_protocol::guest::{self, Display, GuestConfig, HELPER_PATH, WAYPIPE_PATH};
 use midgard_protocol::version::{OLDEST_PROTOCOL, PROTOCOL};
 use midgard_protocol::{AGENT_PORT, CONFIG_PORT, HOST_CID};
 
 /// The default PATH of sessions.
 pub const PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
-
-/// The names under which we are the helper (see [`is_helper`]).
-const HELPER_PATHS: [&str; 2] = [HELPER_PATH, OLD_HELPER_PATH];
 
 /// Logs a line to the console, in one write: the distribution's init writes there, too.
 macro_rules! log {
@@ -125,9 +120,7 @@ fn is_helper(arg0: &OsStr) -> bool {
         return false;
     };
     let name = name.strip_prefix('-').unwrap_or(name);
-    HELPER_PATHS
-        .iter()
-        .any(|path| Path::new(path).file_name() == Some(OsStr::new(name)))
+    Path::new(HELPER_PATH).file_name() == Some(OsStr::new(name))
 }
 
 pub fn main() {
@@ -234,9 +227,6 @@ mod tests {
         assert!(is_helper(OsStr::new("midgard-helper")));
         // A wrapper runs us as a login shell.
         assert!(is_helper(OsStr::new("-midgard-helper")));
-        // Older templates.
-        assert_eq!(OLD_HELPER_PATH, "/run/midgard/midgard-init");
-        assert!(is_helper(OsStr::new(OLD_HELPER_PATH)));
         // midgard-init and waypipe run us as the agent.
         assert!(!is_helper(OsStr::new(AGENT_PATH)));
         assert!(!is_helper(OsStr::new("midgard-agent")));

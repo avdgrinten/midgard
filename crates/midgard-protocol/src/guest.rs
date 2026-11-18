@@ -90,14 +90,13 @@ pub fn config_answer(guest: Hello, config: &GuestConfig) -> io::Result<Vec<u8>> 
 // What midgard-init puts into /run/midgard in the guest (/run is a tmpfs). The files of
 // templates (and of the instances created from them) name the helper, and they stay as
 // they are when the agent changes: the helper's path and its modes must keep working.
+// (The name that the helper had before midgard-agent existed, /run/midgard/midgard-init,
+// is gone: images from back then do not reach the agent anymore.)
 // The rest is in a directory of its own and may change with every version of the agent.
 
 /// What the guest runs to reach the agent: midgard-agent under another name, under which
 /// it only has the guest's modes (e.g., `/run/midgard/midgard-helper ready`).
 pub const HELPER_PATH: &str = "/run/midgard/midgard-helper";
-/// The helper under the name that it had before midgard-agent existed (midgard-init had
-/// the guest's modes): the files of older templates run it.
-pub const OLD_HELPER_PATH: &str = "/run/midgard/midgard-init";
 /// The files that only midgard-init and the agent use. The guest must not rely on them.
 pub const PRIVATE_DIR: &str = "/run/midgard/private";
 /// midgard-agent in the guest (from the initramfs).
