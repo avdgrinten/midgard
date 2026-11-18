@@ -1,7 +1,8 @@
 //! Thin wrappers around the system calls that we need.
 
 use std::ffi::CString;
-use std::os::fd::RawFd;
+use std::fs::File;
+use std::os::fd::{FromRawFd, RawFd};
 
 /// An error that the agent handles (e.g., by reporting it to the client).
 #[derive(Debug, thiserror::Error)]
@@ -72,6 +73,31 @@ pub fn power_off() -> ! {
     }
     loop {
         std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+}
+
+/// Connects to the vsock port `port` of `cid`.
+pub fn vsock_connect(cid: u32, port: u32) -> Result<File, Error> {
+    // SAFETY: socket() and connect() get a valid address; we own the new socket.
+    unsafe {
+        let fd = libc::socket(libc::AF_VSOCK, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0);
+        if fd < 0 {
+            return Err(Error::last("socket(AF_VSOCK)"));
+        }
+        let stream = File::from_raw_fd(fd);
+        let mut address: libc::sockaddr_vm = std::mem::zeroed();
+        address.svm_family = libc::AF_VSOCK as libc::sa_family_t;
+        address.svm_port = port;
+        address.svm_cid = cid;
+        let result = libc::connect(
+            fd,
+            (&raw const address).cast(),
+            size_of::<libc::sockaddr_vm>() as libc::socklen_t,
+        );
+        if result != 0 {
+            return Err(Error::last(format!("connecting to vsock port {port}")));
+        }
+        Ok(stream)
     }
 }
 

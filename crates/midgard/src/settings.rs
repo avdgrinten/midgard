@@ -31,9 +31,10 @@
 //! ready = "systemd"
 //! # The user that sessions run as unless bifrost names one (default: root).
 //! user = "alice"
-//! # A command that midgard-init runs on every boot (as root, before the distribution's
-//! # init) with the user's name as an additional argument, e.g., to create the user.
-//! # Instance files need a user for it; a template's user is the default.
+//! # A command that the agent runs on every boot (as root, once the guest booted as
+//! # `ready` says, i.e., right away with "none", and before sessions run) with the
+//! # user's name as an additional argument, e.g., to create the user and to start their
+//! # services. Instance files need a user for it; a template's user is the default.
 //! user-setup = ["/etc/midgard/user-setup"]
 //! # How the agent runs the commands of sessions: "direct" (default: the agent runs
 //! # them itself), "systemd" (as transient services of the user's systemd instance) or

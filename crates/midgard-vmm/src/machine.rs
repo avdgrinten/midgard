@@ -16,11 +16,11 @@ use event_listener::Event;
 use midgard_protocol::control::Counters;
 use midgard_protocol::guest::{AGENT_FILE, INIT_FILE, Ready};
 use midgard_protocol::machine::{ConsoleKind, MachineConfig};
-use midgard_protocol::{SHARE_TAG, param};
+use midgard_protocol::{CONFIG_PORT, SHARE_TAG, param};
 
 use crate::board::Board;
 use crate::host::console::ConsoleOutput;
-use crate::host::{image, net};
+use crate::host::{guest_config, image, net};
 use crate::logging::log;
 use crate::virtio::block::{self, Block};
 use crate::virtio::console::{self, Console};
@@ -199,7 +199,6 @@ fn load_images(config: &MachineConfig) -> Result<(Vec<u8>, Option<Vec<u8>>)> {
     let kernel = read(&config.kernel, "the kernel")?;
     let initrd = match (&config.agent, &config.initrd) {
         (Some(agent), _) => {
-            let guest_config = midgard_protocol::guest::encode_config(&config.guest)?;
             let waypipe = match &config.waypipe {
                 Some(path) => Some(read(path, "the guest's waypipe")?),
                 None => None,
@@ -207,7 +206,6 @@ fn load_images(config: &MachineConfig) -> Result<(Vec<u8>, Option<Vec<u8>>)> {
             Some(boot::initramfs::build(
                 &read(&agent.join(INIT_FILE), "midgard-init")?,
                 &read(&agent.join(AGENT_FILE), "midgard-agent")?,
-                &guest_config,
                 waypipe.as_deref(),
             ))
         }
@@ -487,6 +485,7 @@ pub fn start(
     let registers = boot::load(&memory, &kernel, initrd.as_deref(), &cmdline, &rsdp)?;
     drop((kernel, initrd));
 
+    let has_vsock = devices.vsock.is_some();
     let board = Arc::new(Board::new(
         memory,
         cpus,
@@ -511,6 +510,13 @@ pub fn start(
     let executor = Arc::new(Executor::new());
     for index in 0..board.num_virtio() {
         executor.spawn(board.clone().process_virtio(index)).detach();
+    }
+    // The guest (which has an agent if it has the vsock device) fetches its
+    // configuration from us.
+    if has_vsock {
+        let listener = VsockListener::bind(&board, CONFIG_PORT)
+            .context("failed to listen for the guest's request for its configuration")?;
+        guest_config::start(&executor, listener, config.guest.clone());
     }
     if let Some(input) = input {
         match devices.console {

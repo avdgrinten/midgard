@@ -2,6 +2,7 @@
 //! on the host. Nothing here is visible to the guest.
 
 pub(crate) mod console;
+pub(crate) mod guest_config;
 pub(crate) mod image;
 pub(crate) mod net;
 pub(crate) mod ping;

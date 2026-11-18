@@ -1,6 +1,7 @@
 #!/bin/sh
-# Creates midgard's default user and starts their OpenRC user services at boot
-# (midgard-init runs it as root before init on every boot: `user-setup`).
+# Creates midgard's default user and starts their OpenRC user services (midgard's agent
+# runs it as root on every boot, once the guest booted and before sessions run:
+# `user-setup`).
 set -eu
 user=$1
 id "$user" >/dev/null 2>&1 || adduser -D -s /bin/sh "$user"
@@ -14,4 +15,14 @@ if [ ! -d "$runlevel" ]; then
     chown -R "$(id -u "$user"):$(id -g "$user")" "$home/.config"
 fi
 [ -e "/etc/init.d/user.$user" ] || ln -s user "/etc/init.d/user.$user"
-[ -e "/etc/runlevels/default/user.$user" ] || rc-update -q add "user.$user" default
+rc-service -q "user.$user" start
+# The user's OpenRC instance starts its services in the background; sessions find them
+# running (we wait up to 30 s).
+uid=$(id -u "$user")
+tries=600
+while [ "$(cat "/run/user/$uid/openrc/softlevel" 2>/dev/null)" != default ] ||
+    pgrep -u "$uid" -x openrc >/dev/null; do
+    tries=$((tries - 1))
+    [ "$tries" -gt 0 ] || break
+    sleep 0.05
+done

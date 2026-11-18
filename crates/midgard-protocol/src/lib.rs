@@ -38,6 +38,10 @@ pub const AGENT_PORT: u32 = 1024;
 /// The host vsock port that the guest's waypipe connects to (once per Wayland client).
 pub const WAYPIPE_PORT: u32 = 1025;
 
+/// The host vsock port on which midgard answers the guest's request for the guest
+/// configuration (see [`guest::fetch_config`]).
+pub const CONFIG_PORT: u32 = 1026;
+
 /// The virtio-fs tag of the host's shared directory.
 pub const SHARE_TAG: &str = "managarm";
 /// Where the agent mounts the shared directory.
@@ -422,36 +426,77 @@ mod tests {
         assert_eq!(rmp_serde::from_slice::<Request>(&bytes).unwrap(), expected);
     }
 
+    /// What a guest sends to midgard and what midgard answers.
+    struct Connection {
+        sent: Vec<u8>,
+        answer: io::Cursor<Vec<u8>>,
+    }
+
+    impl Read for Connection {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            self.answer.read(buffer)
+        }
+    }
+
+    impl Write for Connection {
+        fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+            self.sent.write(data)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
     #[test]
-    fn config_file() {
-        use crate::guest::{ConfigError, encode_config, read_config};
+    fn fetched_config() {
+        use crate::guest::{ConfigError, config_answer, fetch_config};
         use crate::version::{Mismatch, PROTOCOL};
 
         let config = GuestConfig {
-            init: Some("/sbin/init".into()),
+            user: Some("alice".into()),
             ..GuestConfig::default()
         };
-        let file = encode_config(&config).unwrap();
-        let (version, read) = read_config(&mut file.as_slice()).unwrap();
-        assert_eq!((version, read), (PROTOCOL, config));
-
-        // A midgard that is too new for us; we do not look at its configuration.
+        let fetch = |guest: Hello| {
+            let mut connection = Connection {
+                sent: Vec::new(),
+                answer: io::Cursor::new(config_answer(guest, &config).unwrap()),
+            };
+            let fetched = fetch_config(&mut connection);
+            // The guest says which versions it speaks.
+            let mut sent = connection.sent.as_slice();
+            assert_eq!(read_message(&mut sent).unwrap(), Some(Hello::OURS));
+            assert!(sent.is_empty());
+            fetched
+        };
+        assert_eq!(fetch(Hello::OURS).unwrap(), (PROTOCOL, config.clone()));
+        // midgard only says which versions it speaks to a guest that is too new for it;
+        // a guest that speaks our versions takes that for the end of the stream.
         let newer = Hello {
             protocol: Versions {
                 oldest: PROTOCOL + 1,
                 current: PROTOCOL + 2,
             },
         };
-        let mut file = Vec::new();
-        write_message(&mut file, &newer).unwrap();
-        file.extend_from_slice(b"\x01\0\0\0\xc1");
-        let error = read_config(&mut file.as_slice()).unwrap_err();
+        assert!(matches!(fetch(newer).unwrap_err(), ConfigError::Io(_)));
+        // A midgard that is too new for the guest.
+        let mut answer = Vec::new();
+        write_message(&mut answer, &newer).unwrap();
+        let mut connection = Connection {
+            sent: Vec::new(),
+            answer: io::Cursor::new(answer),
+        };
         assert!(matches!(
-            error,
+            fetch_config(&mut connection).unwrap_err(),
             ConfigError::Mismatch(Mismatch::PeerTooNew { .. })
         ));
+        // A midgard that does not answer.
+        let mut connection = Connection {
+            sent: Vec::new(),
+            answer: io::Cursor::new(Vec::new()),
+        };
         assert!(matches!(
-            read_config(&mut &[][..]).unwrap_err(),
+            fetch_config(&mut connection).unwrap_err(),
             ConfigError::Io(_)
         ));
     }
