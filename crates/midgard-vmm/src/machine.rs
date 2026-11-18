@@ -199,7 +199,6 @@ fn load_images(config: &MachineConfig) -> Result<(Vec<u8>, Option<Vec<u8>>)> {
     let kernel = read(&config.kernel, "the kernel")?;
     let initrd = match (&config.agent, &config.initrd) {
         (Some(agent), _) => {
-            let guest_config = midgard_protocol::guest::encode_config(&config.guest)?;
             let waypipe = match &config.waypipe {
                 Some(path) => Some(read(path, "the guest's waypipe")?),
                 None => None,
@@ -207,7 +206,6 @@ fn load_images(config: &MachineConfig) -> Result<(Vec<u8>, Option<Vec<u8>>)> {
             Some(boot::initramfs::build(
                 &read(&agent.join(INIT_FILE), "midgard-init")?,
                 &read(&agent.join(AGENT_FILE), "midgard-agent")?,
-                &guest_config,
                 waypipe.as_deref(),
             ))
         }

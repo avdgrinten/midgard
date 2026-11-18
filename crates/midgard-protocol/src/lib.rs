@@ -426,40 +426,6 @@ mod tests {
         assert_eq!(rmp_serde::from_slice::<Request>(&bytes).unwrap(), expected);
     }
 
-    #[test]
-    fn config_file() {
-        use crate::guest::{ConfigError, encode_config, read_config};
-        use crate::version::{Mismatch, PROTOCOL};
-
-        let config = GuestConfig {
-            init: Some("/sbin/init".into()),
-            ..GuestConfig::default()
-        };
-        let file = encode_config(&config).unwrap();
-        let (version, read) = read_config(&mut file.as_slice()).unwrap();
-        assert_eq!((version, read), (PROTOCOL, config));
-
-        // A midgard that is too new for us; we do not look at its configuration.
-        let newer = Hello {
-            protocol: Versions {
-                oldest: PROTOCOL + 1,
-                current: PROTOCOL + 2,
-            },
-        };
-        let mut file = Vec::new();
-        write_message(&mut file, &newer).unwrap();
-        file.extend_from_slice(b"\x01\0\0\0\xc1");
-        let error = read_config(&mut file.as_slice()).unwrap_err();
-        assert!(matches!(
-            error,
-            ConfigError::Mismatch(Mismatch::PeerTooNew { .. })
-        ));
-        assert!(matches!(
-            read_config(&mut &[][..]).unwrap_err(),
-            ConfigError::Io(_)
-        ));
-    }
-
     /// What a guest sends to midgard and what midgard answers.
     struct Connection {
         sent: Vec<u8>,
@@ -523,6 +489,15 @@ mod tests {
         assert!(matches!(
             fetch_config(&mut connection).unwrap_err(),
             ConfigError::Mismatch(Mismatch::PeerTooNew { .. })
+        ));
+        // A midgard that does not answer.
+        let mut connection = Connection {
+            sent: Vec::new(),
+            answer: io::Cursor::new(Vec::new()),
+        };
+        assert!(matches!(
+            fetch_config(&mut connection).unwrap_err(),
+            ConfigError::Io(_)
         ));
     }
 

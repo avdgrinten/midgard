@@ -8,22 +8,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::version::{Hello, Mismatch, Versions};
 
-/// The name of the guest configuration in the initramfs.
-pub const CONFIG_FILE: &str = "guest-config";
-
 /// The agent's files (in the directory of [`crate::machine::MachineConfig::agent`]):
 /// midgard-init, which the initramfs runs as /init (PID 1), and midgard-agent, which the
 /// initramfs has under the same name.
 pub const INIT_FILE: &str = "midgard-init";
 pub const AGENT_FILE: &str = "midgard-agent";
-
-/// The contents of [`CONFIG_FILE`].
-pub fn encode_config(config: &GuestConfig) -> io::Result<Vec<u8>> {
-    let mut file = Vec::new();
-    crate::write_message(&mut file, &Hello::OURS)?;
-    crate::write_message(&mut file, config)?;
-    Ok(file)
-}
 
 /// Why the agent cannot use midgard's guest configuration (it does not guess what midgard
 /// wants).
@@ -62,7 +51,7 @@ impl std::error::Error for ConfigError {}
 
 /// Reads midgard's [`Hello`] and the guest configuration, which follows it; returns the
 /// latter and the version of the guest protocol to speak with midgard.
-pub fn read_config(reader: &mut impl Read) -> Result<(u32, GuestConfig), ConfigError> {
+fn read_config(reader: &mut impl Read) -> Result<(u32, GuestConfig), ConfigError> {
     let eof = || ConfigError::Io(io::ErrorKind::UnexpectedEof.into());
     let hello: Hello = crate::read_message(reader)
         .map_err(ConfigError::Io)?
