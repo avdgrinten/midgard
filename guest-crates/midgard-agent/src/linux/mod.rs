@@ -15,16 +15,16 @@ use std::fs::File;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::path::Path;
 use std::sync::OnceLock;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use async_io::{Async, Timer};
 use clap::{Parser, Subcommand};
-use midgard_protocol::AGENT_PORT;
 use midgard_protocol::guest::{
-    CONFIG_PATH, Display, GuestConfig, HELPER_PATH, OLD_HELPER_PATH, WAYPIPE_PATH, read_config,
+    self, Display, GuestConfig, HELPER_PATH, OLD_HELPER_PATH, WAYPIPE_PATH,
 };
 use midgard_protocol::version::{OLDEST_PROTOCOL, PROTOCOL};
+use midgard_protocol::{AGENT_PORT, CONFIG_PORT, HOST_CID};
 
 /// The default PATH of sessions.
 pub const PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
@@ -41,25 +41,37 @@ macro_rules! log {
 }
 pub(crate) use log;
 
-/// The guest configuration (from midgard-init).
+/// How long we try to reach midgard for the guest configuration (the guest's vsock
+/// driver may not be up yet when we start).
+const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The guest configuration (see [`fetch_config`]).
 static CONFIG: OnceLock<GuestConfig> = OnceLock::new();
 
+/// The guest configuration, which the agent fetches before anything else.
 pub fn config() -> &'static GuestConfig {
-    CONFIG.get_or_init(load_config)
+    CONFIG.get().expect("the agent fetched the configuration")
 }
 
-fn load_config() -> GuestConfig {
-    // (midgard-init read it before, so it does not fail but for a broken guest.)
-    let result = File::open(CONFIG_PATH)
-        .map_err(|error| error.to_string())
-        .and_then(|mut file| read_config(&mut file).map_err(|error| error.to_string()));
-    match result {
-        Ok((_version, config)) => config,
-        Err(error) => {
-            log!("reading {CONFIG_PATH}: {error}; using the default configuration");
-            GuestConfig::default()
+/// Fetches the guest configuration from midgard. Fails if midgard speaks no version of
+/// the guest protocol that we speak, or if we do not get its configuration.
+fn fetch_config() -> Result<GuestConfig> {
+    let deadline = Instant::now() + FETCH_TIMEOUT;
+    let mut stream = loop {
+        match sys::vsock_connect(HOST_CID, CONFIG_PORT) {
+            Ok(stream) => break stream,
+            // (A midgard from before the agent fetched the configuration does not answer.)
+            Err(error) if Instant::now() > deadline => {
+                bail!("cannot reach midgard for the guest configuration ({error})")
+            }
+            Err(_) => std::thread::sleep(Duration::from_millis(20)),
         }
+    };
+    let (version, config) = guest::fetch_config(&mut stream)?;
+    if version != PROTOCOL {
+        log!("midgard is older: speaking version {version} of the guest protocol");
     }
+    Ok(config)
 }
 
 /// midgard's guest agent, as midgard-init runs it. The guest runs it as the helper
@@ -149,7 +161,8 @@ pub fn main() {
 /// user (with midgard's waypipe and [`Display::Agent`]). One thread runs everything (see
 /// [`rt`]).
 fn agent() -> Result<()> {
-    let config = config();
+    let config = fetch_config()?;
+    let config = CONFIG.get_or_init(|| config);
     let agent_display = config.display == Display::Agent && Path::new(WAYPIPE_PATH).exists();
     let watcher = ready::Watcher::new(config.ready);
     rt::block_on(async {

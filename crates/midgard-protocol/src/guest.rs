@@ -1,8 +1,6 @@
 //! How the agent sets up the guest and runs sessions. midgard decides it (it is part of
-//! a VM instance's settings) and passes it to the agent in the initramfs, as the file
-//! [`CONFIG_FILE`]: two frames (see [`crate::write_message`]), midgard's [`Hello`] and the
-//! [`GuestConfig`]. The agent checks the former before it reads the latter, which another
-//! version of the guest protocol may encode differently.
+//! a VM instance's settings); the agent fetches it from midgard when it starts (see
+//! [`fetch_config`]).
 
 use std::io::{self, Read, Write};
 
@@ -27,7 +25,8 @@ pub fn encode_config(config: &GuestConfig) -> io::Result<Vec<u8>> {
     Ok(file)
 }
 
-/// Why the agent cannot use [`CONFIG_FILE`].
+/// Why the agent cannot use midgard's guest configuration (it does not guess what midgard
+/// wants).
 #[derive(Debug)]
 pub enum ConfigError {
     /// midgard speaks no version of the guest protocol that the agent speaks.
@@ -35,19 +34,34 @@ pub enum ConfigError {
     Io(io::Error),
 }
 
+/// What the guest's console says (with what helps).
 impl std::fmt::Display for ConfigError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            Self::Mismatch(mismatch) => write!(f, "midgard speaks {mismatch}"),
-            Self::Io(error) => error.fmt(f),
+            Self::Mismatch(mismatch) => {
+                let advice = match mismatch {
+                    Mismatch::PeerTooOld { .. } => {
+                        "midgard is too old for this agent: update midgard"
+                    }
+                    Mismatch::PeerTooNew { .. } => {
+                        "this agent is too old for midgard: bifrost pull updates the boot files"
+                    }
+                };
+                write!(f, "{advice} (midgard speaks {mismatch})")
+            }
+            Self::Io(error) => write!(
+                f,
+                "cannot fetch midgard's guest configuration ({error}): midgard and this \
+                 agent do not fit together"
+            ),
         }
     }
 }
 
 impl std::error::Error for ConfigError {}
 
-/// Reads [`CONFIG_FILE`]: the guest configuration and the version of the guest protocol
-/// to speak with midgard.
+/// Reads midgard's [`Hello`] and the guest configuration, which follows it; returns the
+/// latter and the version of the guest protocol to speak with midgard.
 pub fn read_config(reader: &mut impl Read) -> Result<(u32, GuestConfig), ConfigError> {
     let eof = || ConfigError::Io(io::ErrorKind::UnexpectedEof.into());
     let hello: Hello = crate::read_message(reader)
@@ -63,9 +77,10 @@ pub fn read_config(reader: &mut impl Read) -> Result<(u32, GuestConfig), ConfigE
 }
 
 /// Fetches the guest configuration from midgard, on a connection to
-/// [`crate::CONFIG_PORT`]: the guest sends its [`Hello`]; midgard answers with its own
-/// and, if both speak a common version of the guest protocol, the [`GuestConfig`]
-/// (which another version may encode differently). Returns the configuration and the
+/// [`crate::CONFIG_PORT`] of the host ([`crate::HOST_CID`]): the guest sends its
+/// [`Hello`]; midgard answers with its own and, if both speak a common version of the
+/// guest protocol, the [`GuestConfig`] (which another version may encode differently),
+/// each in a frame (see [`crate::write_message`]). Returns the configuration and the
 /// version of the guest protocol to speak with midgard.
 pub fn fetch_config(stream: &mut (impl Read + Write)) -> Result<(u32, GuestConfig), ConfigError> {
     crate::write_message(stream, &Hello::OURS).map_err(ConfigError::Io)?;
@@ -98,8 +113,6 @@ pub const OLD_HELPER_PATH: &str = "/run/midgard/midgard-init";
 pub const PRIVATE_DIR: &str = "/run/midgard/private";
 /// midgard-agent in the guest (from the initramfs).
 pub const AGENT_PATH: &str = "/run/midgard/private/midgard-agent";
-/// [`CONFIG_FILE`] in the guest (as midgard wrote it).
-pub const CONFIG_PATH: &str = "/run/midgard/private/guest-config";
 /// The socket that the helper's `ready` connects to (the agent listens on it).
 pub const NOTIFY_SOCKET: &str = "/run/midgard/private/notify";
 /// The guest's waypipe in the guest (from the initramfs, if midgard offers one).

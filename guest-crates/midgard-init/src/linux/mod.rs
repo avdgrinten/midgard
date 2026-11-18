@@ -10,11 +10,10 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use midgard_protocol::guest::{
-    AGENT_FILE, AGENT_PATH, CONFIG_FILE, CONFIG_PATH, ConfigError, GuestConfig, HELPER_PATH,
-    OLD_HELPER_PATH, PRIVATE_DIR, encode_config, read_config,
+    self, AGENT_FILE, AGENT_PATH, GuestConfig, HELPER_PATH, OLD_HELPER_PATH, PRIVATE_DIR,
 };
-use midgard_protocol::version::{Mismatch, PROTOCOL};
-use midgard_protocol::{SHARE_MOUNT, SHARE_TAG, param};
+use midgard_protocol::version::PROTOCOL;
+use midgard_protocol::{CONFIG_PORT, HOST_CID, SHARE_MOUNT, SHARE_TAG, param};
 use sys::{Error, mount};
 
 /// The PATH of the commands that we run.
@@ -60,7 +59,7 @@ fn boot() -> Result<()> {
     sys::open_console();
 
     // First of all, whether midgard and we fit together: the rest depends on it.
-    let (config, config_file) = load_config()?;
+    let config = fetch_config()?;
     let cmdline = std::fs::read_to_string("/proc/cmdline").context("reading /proc/cmdline")?;
     let root = parameter(&cmdline, param::ROOT)
         .with_context(|| format!("no {}= parameter", param::ROOT))?;
@@ -93,7 +92,7 @@ fn boot() -> Result<()> {
     setup_root();
     setup_network();
     mount_share();
-    install_agent(&agent, &config_file);
+    install_agent(&agent);
     drop(agent);
     user_setup(&config);
     if let Some(waypipe) = &waypipe {
@@ -109,46 +108,27 @@ fn boot() -> Result<()> {
     reap(agent_pid)
 }
 
-/// Reads the guest configuration from the initramfs (before we leave it); returns it and
-/// the file that it was in, which the agent reads, too. Fails if midgard speaks no version
-/// of the guest protocol that we speak, or if we cannot read its configuration (we do not
-/// guess what it wants).
-fn load_config() -> Result<(GuestConfig, Vec<u8>)> {
-    let path = format!("/{CONFIG_FILE}");
-    let file = match std::fs::read(&path) {
-        Ok(file) => file,
-        // An initramfs that midgard did not build.
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            log!("no {path}; using the default configuration");
-            let config = GuestConfig::default();
-            let file = encode_config(&config).context("encoding the default configuration")?;
-            return Ok((config, file));
-        }
-        Err(error) => bail!("reading {path}: {error}"),
-    };
-    // The initramfs stays in memory.
-    let _ = std::fs::remove_file(&path);
-    match read_config(&mut file.as_slice()) {
-        Ok((version, config)) => {
-            if version != PROTOCOL {
-                log!("midgard is older: speaking version {version} of the guest protocol");
+/// Fetches the guest configuration from midgard. Fails if midgard speaks no version of
+/// the guest protocol that we speak, or if we do not get its configuration. (The agent
+/// fetches it, too.)
+fn fetch_config() -> Result<GuestConfig> {
+    // The vsock device shows up once its driver probed it.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut stream = loop {
+        match sys::vsock_connect(HOST_CID, CONFIG_PORT) {
+            Ok(stream) => break stream,
+            // (A midgard from before we fetched the configuration does not answer.)
+            Err(error) if Instant::now() > deadline => {
+                bail!("cannot reach midgard for the guest configuration ({error})")
             }
-            Ok((config, file))
+            Err(_) => std::thread::sleep(Duration::from_millis(10)),
         }
-        Err(ConfigError::Mismatch(mismatch)) => {
-            let advice = match mismatch {
-                Mismatch::PeerTooOld { .. } => "midgard is too old for this agent: update midgard",
-                Mismatch::PeerTooNew { .. } => {
-                    "this agent is too old for midgard: bifrost pull updates the boot files"
-                }
-            };
-            bail!("{advice} (midgard speaks {mismatch})")
-        }
-        Err(ConfigError::Io(error)) => bail!(
-            "cannot read midgard's configuration in {path} ({error}): midgard and this agent \
-             do not fit together"
-        ),
+    };
+    let (version, config) = guest::fetch_config(&mut stream)?;
+    if version != PROTOCOL {
+        log!("midgard is older: speaking version {version} of the guest protocol");
     }
+    Ok(config)
 }
 
 /// Reads midgard-agent from the initramfs (before we leave it).
@@ -160,10 +140,9 @@ fn load_agent() -> Result<Vec<u8>> {
     Ok(agent)
 }
 
-/// Installs the agent as [`AGENT_PATH`], the names under which the guest runs it
-/// ([`HELPER_PATH`] and [`OLD_HELPER_PATH`]) and the guest configuration's file as
-/// [`CONFIG_PATH`].
-fn install_agent(agent: &[u8], config_file: &[u8]) {
+/// Installs the agent as [`AGENT_PATH`] and the names under which the guest runs it
+/// ([`HELPER_PATH`] and [`OLD_HELPER_PATH`]).
+fn install_agent(agent: &[u8]) {
     // (Users run the helper and waypipe.)
     let result = std::fs::DirBuilder::new()
         .recursive(true)
@@ -178,9 +157,6 @@ fn install_agent(agent: &[u8], config_file: &[u8]) {
         if let Err(error) = std::os::unix::fs::symlink(AGENT_PATH, helper) {
             log!("creating {helper}: {error}");
         }
-    }
-    if let Err(error) = std::fs::write(CONFIG_PATH, config_file) {
-        log!("writing {CONFIG_PATH}: {error}");
     }
 }
 

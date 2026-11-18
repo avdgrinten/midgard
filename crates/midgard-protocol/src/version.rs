@@ -1,12 +1,12 @@
 //! The versions of the guest protocol: what midgard and the agent (and the rest of the
 //! guest files that midgard boots it with) assume about each other. It comprises the
-//! guest configuration ([`crate::guest`]) and how it gets into the initramfs, the session
+//! guest configuration ([`crate::guest`]) and how the agent gets it, the session
 //! protocol ([`crate::session`]) and the constants in the crate's root.
 //!
 //! The agent is distributed apart from midgard, so both sides say which versions they
-//! speak ([`Hello`]) and use the newest one that both do ([`Versions::negotiate`]): midgard
-//! in the guest configuration's file, the agent when midgard connects to it once it
-//! started.
+//! speak ([`Hello`]) and use the newest one that both do ([`Versions::negotiate`]): when
+//! the agent fetches the guest configuration, and when midgard connects to the agent once
+//! it started.
 
 use std::fmt;
 
@@ -17,9 +17,11 @@ use serde::{Deserialize, Serialize};
 /// 1. The first one.
 /// 2. The initramfs has midgard-agent next to midgard-init (see
 ///    [`crate::guest::AGENT_FILE`]), which midgard-init starts as the agent.
-pub const PROTOCOL: u32 = 2;
+/// 3. The agent fetches the guest configuration from midgard (see
+///    [`crate::guest::fetch_config`]) instead of reading it from the initramfs.
+pub const PROTOCOL: u32 = 3;
 /// The oldest version of the guest protocol that this build still speaks with a peer.
-pub const OLDEST_PROTOCOL: u32 = 2;
+pub const OLDEST_PROTOCOL: u32 = 3;
 
 /// The versions of the guest protocol that one side speaks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
