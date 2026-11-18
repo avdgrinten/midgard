@@ -104,7 +104,8 @@ pub const PRIVATE_DIR: &str = "/run/midgard/private";
 pub const AGENT_PATH: &str = "/run/midgard/private/midgard-agent";
 /// The socket that the helper's `ready` connects to (the agent listens on it).
 pub const NOTIFY_SOCKET: &str = "/run/midgard/private/notify";
-/// The guest's waypipe in the guest (from the initramfs, if midgard offers one).
+/// The guest's waypipe in the guest if midgard forwards the guest's Wayland clients
+/// (from the initramfs, or a link to the guest's own).
 pub const WAYPIPE_PATH: &str = "/run/midgard/private/waypipe";
 /// Exists if the guest's waypipe logs debug messages (see [`GuestConfig::waypipe_debug`]).
 pub const WAYPIPE_DEBUG_PATH: &str = "/run/midgard/private/waypipe-debug";

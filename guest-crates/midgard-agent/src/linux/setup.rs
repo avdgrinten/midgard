@@ -10,7 +10,9 @@ use std::time::Duration;
 
 use async_io::Timer;
 use futures_lite::future;
-use midgard_protocol::guest::{AGENT_PATH, GuestConfig, HELPER_PATH, PRIVATE_DIR};
+use midgard_protocol::guest::{
+    AGENT_PATH, GuestConfig, HELPER_PATH, PRIVATE_DIR, WAYPIPE_DEBUG_PATH, WAYPIPE_PATH,
+};
 
 use super::{PATH, log, process};
 
@@ -27,8 +29,10 @@ fn link(target: &Path, link: &str) -> io::Result<()> {
 }
 
 /// `midgard-agent serve` without `--from-midgard-init`: installs the agent under the
-/// names that the guest and we run it as (links to the guest's agent, which runs).
-pub fn install() -> io::Result<()> {
+/// names that the guest and we run it as (links to the guest's agent, which runs), and
+/// the guest's own waypipe as [`WAYPIPE_PATH`] if midgard forwards the guest's Wayland
+/// clients.
+pub fn install(config: &GuestConfig) -> io::Result<()> {
     // (Not every guest knows our executable; a service's command is an absolute path.)
     let agent = std::env::current_exe().or_else(|error| {
         let command = std::env::args_os().next().map(PathBuf::from);
@@ -41,6 +45,24 @@ pub fn install() -> io::Result<()> {
         .create(PRIVATE_DIR)?;
     for path in [AGENT_PATH, HELPER_PATH] {
         link(&agent, path)?;
+    }
+    // (From when we ran before.)
+    for path in [WAYPIPE_PATH, WAYPIPE_DEBUG_PATH] {
+        match std::fs::remove_file(path) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+            _ => {}
+        }
+    }
+    if !config.wayland {
+        return Ok(());
+    }
+    let Some(waypipe) = process::resolve("waypipe", PATH) else {
+        log!("the guest has no waypipe; midgard cannot forward its Wayland clients");
+        return Ok(());
+    };
+    link(Path::new(&waypipe), WAYPIPE_PATH)?;
+    if config.waypipe_debug {
+        std::fs::write(WAYPIPE_DEBUG_PATH, "")?;
     }
     Ok(())
 }

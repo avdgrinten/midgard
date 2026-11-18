@@ -164,7 +164,7 @@ pub fn main() {
 fn agent(install: bool) -> Result<()> {
     let config = fetch_config()?;
     if install {
-        setup::install().context("installing the agent in /run/midgard")?;
+        setup::install(&config).context("installing the agent in /run/midgard")?;
     }
     let config = CONFIG.get_or_init(|| config);
     let agent_display = config.display == Display::Agent && Path::new(WAYPIPE_PATH).exists();
