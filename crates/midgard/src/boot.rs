@@ -450,6 +450,22 @@ mod tests {
         assert!(error.contains("needs a newer midgard"), "{error}");
     }
 
+    /// The boot files that guest/build.py builds are those of Linux from before boot
+    /// files had a description, but for the command line, which is their own.
+    #[test]
+    fn guest_boot_files() {
+        let linux = Description::parse(include_str!("../../../guest/boot.toml")).unwrap();
+        let cmdline = "reboot=k panic=-1 console=hvc0 \
+                       ip=10.0.2.15::10.0.2.2:255.255.255.0:midgard:eth0:off:10.0.2.3";
+        assert_eq!(
+            linux,
+            Description {
+                cmdline: Some(cmdline.into()),
+                ..Description::default()
+            }
+        );
+    }
+
     #[test]
     fn placeholders() {
         assert_eq!(expand("").unwrap(), "");
