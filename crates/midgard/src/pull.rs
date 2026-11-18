@@ -120,8 +120,8 @@ impl Channel {
         // What we cannot name is not for us (e.g., a newer midgard allows more names): we
         // leave it out instead of rejecting the channel.
         channel.boot.retain(|name, boot| {
-            let valid =
-                validate_name(name).is_ok() && boot.files.keys().all(|file| file_name(file));
+            let valid = validate_name(name).is_ok()
+                && boot.files.keys().all(|file| boot::is_file_name(file));
             if !valid {
                 log!("ignoring the channel's boot files {name:?}, whose names are invalid");
             }
@@ -136,17 +136,6 @@ impl Channel {
         });
         Ok(channel)
     }
-}
-
-/// Whether `name` can be a file of boot files: a plain name that is none of our own (those
-/// start with a dot, or are the manifest).
-fn file_name(name: &str) -> bool {
-    !name.is_empty()
-        && !name.starts_with('.')
-        && name != boot::MANIFEST
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
 }
 
 /// Where a channel or one of its files is.
