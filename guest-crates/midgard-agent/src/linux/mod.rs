@@ -7,6 +7,7 @@ mod process;
 mod ready;
 mod rt;
 mod session;
+mod setup;
 mod sys;
 mod users;
 
@@ -166,8 +167,9 @@ fn agent() -> Result<()> {
     let agent_display = config.display == Display::Agent && Path::new(WAYPIPE_PATH).exists();
     let watcher = ready::Watcher::new(config.ready);
     rt::block_on(async {
-        // Sessions find the display running.
-        let display = async move {
+        // Sessions find the user set up and the display running.
+        let booted = async move {
+            setup::user_setup(config).await;
             if agent_display {
                 let name = config.user.as_deref().unwrap_or("root");
                 match users::lookup(name) {
@@ -176,7 +178,7 @@ fn agent() -> Result<()> {
                 }
             }
         };
-        rt::spawn(ready::watch(watcher, display)).detach();
+        rt::spawn(ready::watch(watcher, booted)).detach();
         serve().await
     })
 }

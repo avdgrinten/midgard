@@ -94,7 +94,6 @@ fn boot() -> Result<()> {
     mount_share();
     install_agent(&agent);
     drop(agent);
-    user_setup(&config);
     if let Some(waypipe) = &waypipe {
         display::install(waypipe, &config);
     }
@@ -195,30 +194,6 @@ fn start_agent() -> Result<libc::pid_t> {
             unsafe { libc::_exit(127) }
         }
         pid => Ok(pid),
-    }
-}
-
-/// Runs the user setup command (see [`GuestConfig::user_setup`]).
-fn user_setup(config: &GuestConfig) {
-    let (Some(user), Some(setup)) = (&config.user, &config.user_setup) else {
-        return;
-    };
-    let Some((program, args)) = setup.split_first() else {
-        return;
-    };
-    log!("setting up user {user}");
-    let status = std::process::Command::new(program)
-        .args(args)
-        .arg(user)
-        .env_clear()
-        .env("PATH", PATH)
-        .env("HOME", "/root")
-        .current_dir("/")
-        .status();
-    match status {
-        Ok(status) if status.success() => {}
-        Ok(status) => log!("{program} failed ({status})"),
-        Err(error) => log!("running {program}: {error}"),
     }
 }
 

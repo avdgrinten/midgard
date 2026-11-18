@@ -122,9 +122,12 @@ pub struct GuestConfig {
     pub ready: Ready,
     /// The user that sessions run as unless they name one (root if absent).
     pub user: Option<String>,
-    /// A command that midgard-init runs on every boot (as root, before the distribution's
-    /// init) with [`GuestConfig::user`] as an additional argument, e.g., to create the
-    /// user. It must do nothing if there is nothing to do.
+    /// A command that the agent runs on every boot (as root, once the guest booted, see
+    /// [`GuestConfig::ready`], and before sessions run) with [`GuestConfig::user`] as an
+    /// additional argument, e.g., to create the user and to start what sessions need of
+    /// the user (e.g., their service manager). It must do nothing if there is nothing to
+    /// do. With [`Ready::Immediately`], neither it nor sessions wait for the guest to
+    /// boot: it runs when the agent starts, i.e., while the distribution's init does.
     pub user_setup: Option<Vec<String>>,
     /// How the agent runs the commands of sessions.
     pub launcher: Launcher,

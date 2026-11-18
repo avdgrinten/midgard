@@ -1,9 +1,10 @@
 #!/bin/sh
-# Creates midgard's default user, whose systemd instance starts at boot (the user
-# lingers), as sessions run in it (midgard-init runs this as root before init on every
-# boot: `user-setup`).
+# Creates midgard's default user and starts their systemd instance, in which sessions
+# run (midgard's agent runs this as root on every boot, once the guest booted and before
+# sessions run: `user-setup`). The user lingers, such that the instance starts at boot
+# and nothing stops it.
 set -eu
 user=$1
 id "$user" >/dev/null 2>&1 || useradd -m -s /bin/bash "$user"
-mkdir -p /var/lib/systemd/linger
-touch "/var/lib/systemd/linger/$user"
+loginctl enable-linger "$user"
+systemctl start "user@$(id -u "$user").service"
