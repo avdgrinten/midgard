@@ -4,7 +4,8 @@
 //! next to the host's compositor. `midgard-helper waypipe` runs the server (see
 //! [`server`]); who runs that depends on the guest configuration (see
 //! [`Display`](midgard_protocol::guest::Display)).
-//! midgard-init installs waypipe (from the initramfs) as [`WAYPIPE_PATH`].
+//! midgard-init installs waypipe (from the initramfs) as [`WAYPIPE_PATH`]; in a guest
+//! that starts the agent itself, the agent links the guest's own waypipe there.
 
 use std::io;
 use std::os::unix::fs::DirBuilderExt;

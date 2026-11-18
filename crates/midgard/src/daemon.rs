@@ -485,15 +485,16 @@ fn boot_instance(name: &str, display: Option<PathBuf>, running: &Running) -> Res
     // Dropped after the VM, such that the log is complete once we report why it stopped.
     let (console_log, console) = ConsoleLog::start(name, log)?;
 
-    // The guest gets a Wayland display only if we can forward its clients.
-    let gui = config
-        .waypipe
-        .is_some()
+    // The guest gets a Wayland display only if we can forward its clients. A guest that
+    // starts the agent itself has its own waypipe, which the guest configuration tells
+    // its agent to run.
+    let gui = (config.waypipe.is_some() || config.agent_in_image)
         .then(|| start_waypipe(runtime::waypipe_socket(name), display))
         .flatten();
     if gui.is_none() {
         config.waypipe = None;
     }
+    config.guest.wayland = gui.is_some();
     let machine = midgard_vmm::start(&config, console, None)?;
     drop(files);
     let handle = machine.handle();

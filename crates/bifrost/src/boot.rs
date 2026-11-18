@@ -47,6 +47,7 @@ fn config(boot: &BootArgs) -> Result<MachineConfig> {
         kernel: absolute(&boot.kernel)?,
         initrd: boot.initrd.as_deref().map(absolute).transpose()?,
         agent: boot.agent.as_deref().map(absolute).transpose()?,
+        agent_in_image: boot.agent_in_image,
         cmdline: boot.cmdline.clone(),
         append: boot.append.clone(),
         memory: boot.memory.unwrap_or(DEFAULT_MEMORY),

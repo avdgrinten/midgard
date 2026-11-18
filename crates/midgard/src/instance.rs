@@ -89,6 +89,7 @@ impl Instance {
             kernel: boot.kernel,
             initrd: None,
             agent: Some(boot.agent),
+            agent_in_image: false,
             cmdline: None,
             append: Vec::new(),
             memory: self.settings.memory.unwrap_or(DEFAULT_MEMORY),

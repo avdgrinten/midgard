@@ -53,6 +53,9 @@ pub mod param {
     pub const ROOT: &str = "midgard.root";
     /// The root file system's type (default: ext4).
     pub const ROOT_FSTYPE: &str = "midgard.rootfstype";
+    /// Tells a guest that starts the agent itself to start it (see
+    /// [`crate::machine::MachineConfig::agent_in_image`]).
+    pub const AGENT: &str = "midgard.agent";
 }
 
 /// Frames larger than this are rejected.
@@ -154,6 +157,7 @@ mod tests {
             kernel: "/boot/bzImage".into(),
             initrd: None,
             agent: Some("/usr/lib/midgard".into()),
+            agent_in_image: false,
             cmdline: None,
             append: vec!["quiet".into(), "loglevel=3".into()],
             memory: 2 << 30,
@@ -172,6 +176,7 @@ mod tests {
                 user_setup: Some(vec!["/etc/midgard/user-setup".into()]),
                 launcher: Launcher::Wrapper(vec!["runuser".into(), "{helper}".into()]),
                 display: Display::Systemd,
+                wayland: true,
                 waypipe_debug: true,
             },
             waypipe: Some("/usr/lib/midgard/guest-waypipe".into()),

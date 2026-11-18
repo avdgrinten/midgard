@@ -87,7 +87,8 @@ pub fn config_answer(guest: Hello, config: &GuestConfig) -> io::Result<Vec<u8>> 
     Ok(answer)
 }
 
-// What midgard-init puts into /run/midgard in the guest (/run is a tmpfs). The files of
+// What midgard-init (or the agent of a guest that starts the agent itself) puts into
+// /run/midgard in the guest (/run is a tmpfs). The files of
 // templates (and of the instances created from them) name the helper, and they stay as
 // they are when the agent changes: the helper's path and its modes must keep working.
 // (The name that the helper had before midgard-agent existed, /run/midgard/midgard-init,
@@ -99,11 +100,12 @@ pub fn config_answer(guest: Hello, config: &GuestConfig) -> io::Result<Vec<u8>> 
 pub const HELPER_PATH: &str = "/run/midgard/midgard-helper";
 /// The files that only midgard-init and the agent use. The guest must not rely on them.
 pub const PRIVATE_DIR: &str = "/run/midgard/private";
-/// midgard-agent in the guest (from the initramfs).
+/// midgard-agent in the guest (from the initramfs, or a link to the guest's).
 pub const AGENT_PATH: &str = "/run/midgard/private/midgard-agent";
 /// The socket that the helper's `ready` connects to (the agent listens on it).
 pub const NOTIFY_SOCKET: &str = "/run/midgard/private/notify";
-/// The guest's waypipe in the guest (from the initramfs, if midgard offers one).
+/// The guest's waypipe in the guest if midgard forwards the guest's Wayland clients
+/// (from the initramfs, or a link to the guest's own).
 pub const WAYPIPE_PATH: &str = "/run/midgard/private/waypipe";
 /// Exists if the guest's waypipe logs debug messages (see [`GuestConfig::waypipe_debug`]).
 pub const WAYPIPE_DEBUG_PATH: &str = "/run/midgard/private/waypipe-debug";
@@ -131,8 +133,12 @@ pub struct GuestConfig {
     /// How the agent runs the commands of sessions.
     pub launcher: Launcher,
     /// Who starts the Wayland display that forwards the guest's Wayland clients to the
-    /// host (if midgard gives the guest a waypipe).
+    /// host (if midgard forwards them).
     pub display: Display,
+    /// midgard forwards the guest's Wayland clients: there is a Wayland display, which
+    /// the guest's waypipe serves (the one that midgard gives the guest in the
+    /// initramfs; a guest that starts the agent itself has its own).
+    pub wayland: bool,
     /// The guest's waypipe logs debug messages.
     pub waypipe_debug: bool,
 }
@@ -147,7 +153,7 @@ pub enum Display {
     /// user get `WAYLAND_DISPLAY` and `XDG_RUNTIME_DIR`.
     #[default]
     Agent,
-    /// Every user's systemd instance, through a user unit that the agent installs in
+    /// Every user's systemd instance, through a user unit that midgard-init installs in
     /// /run/systemd/user; /run/environment.d sets `WAYLAND_DISPLAY` for the instance's
     /// services (and thus for the commands of [`Launcher::Systemd`]; sessions of other
     /// launchers need the guest to set it).

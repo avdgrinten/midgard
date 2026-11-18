@@ -165,6 +165,7 @@ fn start_agent() -> Result<libc::pid_t> {
     let argv = [
         c"midgard-agent".as_ptr(),
         c"serve".as_ptr(),
+        c"--from-midgard-init".as_ptr(),
         std::ptr::null(),
     ];
     let env = [
