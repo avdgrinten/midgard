@@ -23,7 +23,8 @@
 //!
 //! [guest]
 //! # The distribution's init, which midgard-init executes as PID 1 (default: none,
-//! # midgard-init stays PID 1).
+//! # midgard-init stays PID 1 and no services run, so nothing can rely on systemd).
+//! # Not for guests that start the agent (and their init) themselves.
 //! init = "/sbin/init"
 //! # How sessions wait for the guest to boot: "none" (default), "systemd" (until
 //! # `systemctl is-system-running --wait` returns) or "notify" (until the guest runs
@@ -44,8 +45,8 @@
 //! wrapper = ["runuser", "-l", "{user}", "-s", "{helper}"]
 //! # Who starts the Wayland display for the guest's Wayland clients (with midgard's
 //! # guest-waypipe): "agent" (default: the agent, for the default user), "systemd" (the
-//! # users' systemd instances) or "guest" (the guest runs `/run/midgard/midgard-helper
-//! # waypipe` as the user itself).
+//! # users' systemd instances, with a unit that midgard-init installs: it needs init) or
+//! # "guest" (the guest runs `/run/midgard/midgard-helper waypipe` as the user itself).
 //! display = "systemd"
 //! ```
 
@@ -156,9 +157,6 @@ impl GuestSettings {
         {
             bail!("init must be an absolute path (not {init:?})");
         }
-        if self.init.is_none() && ready != Ready::Immediately {
-            bail!("ready needs init");
-        }
         if let Some(user) = &self.user {
             validate_user(user)?;
         }
@@ -179,12 +177,7 @@ impl GuestSettings {
                 Launcher::Wrapper(wrapper.clone())
             }
             (_, Some(_)) => bail!("wrapper needs launcher = \"wrapper\""),
-            (Some(LauncherSetting::Systemd), None) => {
-                if self.init.is_none() {
-                    bail!("launcher = \"systemd\" needs init");
-                }
-                Launcher::Systemd
-            }
+            (Some(LauncherSetting::Systemd), None) => Launcher::Systemd,
             (None | Some(LauncherSetting::Direct), None) => Launcher::Direct,
         };
         let display = match self.display {
@@ -541,11 +534,22 @@ user = "alice"
         assert_eq!(config.user.as_deref(), Some("alice"));
         assert_eq!(config.display, Display::Guest);
         assert!(matches!(config.launcher, Launcher::Wrapper(argv) if argv.len() == 5));
+        // A guest that starts the agent itself (see [`crate::boot`]) has its own init:
+        // only midgard's agent needs `init` for what systemd does (which midgard checks
+        // when it boots the guest).
+        let config = guest(
+            r#"
+            [guest]
+            ready = "systemd"
+            launcher = "systemd"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(config.init, None);
+        assert_eq!(config.launcher, Launcher::Systemd);
         for invalid in [
             "[guest]\ninit = \"sbin/init\"",
-            "[guest]\nready = \"systemd\"",
             "[guest]\nready = \"soon\"",
-            "[guest]\nlauncher = \"systemd\"",
             "[guest]\nlauncher = \"wrapper\"",
             "[guest]\nlauncher = \"wrapper\"\nwrapper = [\"su\"]",
             "[guest]\nwrapper = [\"{helper}\"]",

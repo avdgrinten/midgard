@@ -14,7 +14,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use async_executor::Executor;
 use event_listener::Event;
 use midgard_protocol::control::Counters;
-use midgard_protocol::guest::{AGENT_FILE, INIT_FILE, Ready};
+use midgard_protocol::guest::{AGENT_FILE, Display, INIT_FILE, Launcher, Ready};
 use midgard_protocol::machine::{ConsoleKind, MachineConfig};
 use midgard_protocol::{CONFIG_PORT, SHARE_TAG, param};
 
@@ -74,7 +74,8 @@ fn validate(config: &MachineConfig, cpus: u32) -> Result<()> {
     if config.agent.is_some() && config.agent_in_image {
         bail!("midgard's agent and the guest's agent are mutually exclusive");
     }
-    if let Some(init) = &config.guest.init {
+    let guest = &config.guest;
+    if let Some(init) = &guest.init {
         if config.agent.is_none() {
             bail!(
                 "the distribution's init needs midgard's agent (a guest that starts the \
@@ -84,8 +85,20 @@ fn validate(config: &MachineConfig, cpus: u32) -> Result<()> {
         if !init.starts_with('/') {
             bail!("the distribution's init must be an absolute path (not {init:?})");
         }
-    } else if config.guest.ready != Ready::Immediately {
-        bail!("waiting for the guest to boot needs the distribution's init");
+    } else {
+        // midgard-init, which installs the display's systemd unit, starts no init.
+        if guest.display == Display::Systemd {
+            bail!("a Wayland display that systemd runs needs the distribution's init");
+        }
+        // midgard-init stays PID 1, and no services run.
+        if !config.agent_in_image {
+            if guest.ready != Ready::Immediately {
+                bail!("waiting for the guest to boot needs the distribution's init");
+            }
+            if guest.launcher == Launcher::Systemd {
+                bail!("running sessions through systemd needs the distribution's init");
+            }
+        }
     }
     if config.waypipe.is_some() && config.agent.is_none() {
         bail!("the guest's waypipe needs the agent");
@@ -614,16 +627,48 @@ mod tests {
 
     #[test]
     fn agents_in_images() {
+        // A guest that starts the agent itself has an init that midgard does not name.
         let mut config = config(ConsoleKind::Serial, false);
         config.agent_in_image = true;
-        config.guest.user = Some("alice".into());
+        config.guest = GuestConfig {
+            user: Some("alice".into()),
+            ready: Ready::Systemd,
+            launcher: Launcher::Systemd,
+            display: Display::Guest,
+            ..GuestConfig::default()
+        };
         validate(&config, 1).unwrap();
-        // It starts its init itself.
+        // (midgard-init installs the display's systemd unit.)
+        config.guest.display = Display::Systemd;
+        assert!(validate(&config, 1).is_err());
         config.guest.init = Some("/sbin/init".into());
         let error = validate(&config, 1).unwrap_err().to_string();
         assert!(error.contains("starts its init"), "{error}");
-        config.guest = GuestConfig::default();
+        // midgard's agent only finds systemd if midgard-init starts it.
+        config.agent_in_image = false;
         config.agent = Some("agent".into());
+        validate(&config, 1).unwrap();
+        config.guest.init = None;
+        for guest in [
+            GuestConfig {
+                ready: Ready::Notify,
+                ..GuestConfig::default()
+            },
+            GuestConfig {
+                launcher: Launcher::Systemd,
+                ..GuestConfig::default()
+            },
+            GuestConfig {
+                display: Display::Systemd,
+                ..GuestConfig::default()
+            },
+        ] {
+            config.guest = guest;
+            assert!(validate(&config, 1).is_err(), "{:?}", config.guest);
+        }
+        config.guest = GuestConfig::default();
+        validate(&config, 1).unwrap();
+        config.agent_in_image = true;
         assert!(validate(&config, 1).is_err());
     }
 }

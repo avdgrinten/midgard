@@ -147,7 +147,7 @@ pub enum Display {
     /// user get `WAYLAND_DISPLAY` and `XDG_RUNTIME_DIR`.
     #[default]
     Agent,
-    /// Every user's systemd instance, through a user unit that the agent installs in
+    /// Every user's systemd instance, through a user unit that midgard-init installs in
     /// /run/systemd/user; /run/environment.d sets `WAYLAND_DISPLAY` for the instance's
     /// services (and thus for the commands of [`Launcher::Systemd`]; sessions of other
     /// launchers need the guest to set it).
