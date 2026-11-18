@@ -68,8 +68,6 @@ pub const MANIFEST: &str = "manifest.json";
 
 /// The guest kernel of boot files without a description.
 const KERNEL: &str = "vmlinuz";
-/// The files that boot files need to have.
-pub const REQUIRED: [&str; 3] = [KERNEL, INIT_FILE, AGENT_FILE];
 /// The guest's waypipe (a static Linux build) of boot files without a description.
 const WAYPIPE: &str = "guest-waypipe";
 
