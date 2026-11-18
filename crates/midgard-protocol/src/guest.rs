@@ -4,7 +4,7 @@
 //! [`GuestConfig`]. The agent checks the former before it reads the latter, which another
 //! version of the guest protocol may encode differently.
 
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 
 use serde::{Deserialize, Serialize};
 
@@ -60,6 +60,27 @@ pub fn read_config(reader: &mut impl Read) -> Result<(u32, GuestConfig), ConfigE
         .map_err(ConfigError::Io)?
         .ok_or_else(eof)?;
     Ok((version, config))
+}
+
+/// Fetches the guest configuration from midgard, on a connection to
+/// [`crate::CONFIG_PORT`]: the guest sends its [`Hello`]; midgard answers with its own
+/// and, if both speak a common version of the guest protocol, the [`GuestConfig`]
+/// (which another version may encode differently). Returns the configuration and the
+/// version of the guest protocol to speak with midgard.
+pub fn fetch_config(stream: &mut (impl Read + Write)) -> Result<(u32, GuestConfig), ConfigError> {
+    crate::write_message(stream, &Hello::OURS).map_err(ConfigError::Io)?;
+    read_config(stream)
+}
+
+/// What midgard answers to a guest that fetches the guest configuration and sent
+/// `guest` (see [`fetch_config`]).
+pub fn config_answer(guest: Hello, config: &GuestConfig) -> io::Result<Vec<u8>> {
+    let mut answer = Vec::new();
+    crate::write_message(&mut answer, &Hello::OURS)?;
+    if Versions::OURS.negotiate(guest.protocol).is_ok() {
+        crate::write_message(&mut answer, config)?;
+    }
+    Ok(answer)
 }
 
 // What midgard-init puts into /run/midgard in the guest (/run is a tmpfs). The files of

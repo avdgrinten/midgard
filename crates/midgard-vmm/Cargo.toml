@@ -15,7 +15,7 @@ event-listener.workspace = true
 futures-lite.workspace = true
 libc.workspace = true
 midgard-hv.workspace = true
-midgard-protocol.workspace = true
+midgard-protocol = { workspace = true, features = ["async"] }
 piper.workspace = true
 smoltcp = { version = "0.14", default-features = false, features = [
     "std",
