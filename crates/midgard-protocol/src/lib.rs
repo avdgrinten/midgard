@@ -176,6 +176,7 @@ mod tests {
                 user_setup: Some(vec!["/etc/midgard/user-setup".into()]),
                 launcher: Launcher::Wrapper(vec!["runuser".into(), "{helper}".into()]),
                 display: Display::Systemd,
+                wayland: true,
                 waypipe_debug: true,
             },
             waypipe: Some("/usr/lib/midgard/guest-waypipe".into()),

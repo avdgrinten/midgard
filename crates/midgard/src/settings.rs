@@ -197,6 +197,8 @@ impl GuestSettings {
             user_setup: self.user_setup.clone(),
             launcher,
             display,
+            // (midgard decides these when it boots the guest.)
+            wayland: false,
             waypipe_debug: false,
         })
     }

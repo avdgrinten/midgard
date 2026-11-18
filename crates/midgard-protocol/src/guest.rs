@@ -132,8 +132,12 @@ pub struct GuestConfig {
     /// How the agent runs the commands of sessions.
     pub launcher: Launcher,
     /// Who starts the Wayland display that forwards the guest's Wayland clients to the
-    /// host (if midgard gives the guest a waypipe).
+    /// host (if midgard forwards them).
     pub display: Display,
+    /// midgard forwards the guest's Wayland clients: there is a Wayland display, which
+    /// the guest's waypipe serves (the one that midgard gives the guest in the
+    /// initramfs; a guest that starts the agent itself has its own).
+    pub wayland: bool,
     /// The guest's waypipe logs debug messages.
     pub waypipe_debug: bool,
 }
