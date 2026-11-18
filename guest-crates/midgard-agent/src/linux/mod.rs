@@ -82,7 +82,12 @@ struct Agent {
 #[derive(Debug, Subcommand)]
 enum AgentMode {
     /// Serve sessions, watch the guest boot and run the Wayland display
-    Serve,
+    Serve {
+        /// midgard-init installed the agent in /run/midgard (else, in a guest whose image
+        /// has the agent, the agent installs itself first)
+        #[arg(long)]
+        from_midgard_init: bool,
+    },
     /// Wait forever (the waypipe server's command)
     Pause,
     /// Print the oldest and the newest version of the guest protocol that we speak (for
@@ -136,7 +141,9 @@ pub fn main() {
         ("midgard-helper", result)
     } else {
         let result = match Agent::parse().mode {
-            AgentMode::Serve => agent().map_err(|error| format!("{error:#}")),
+            AgentMode::Serve { from_midgard_init } => {
+                agent(!from_midgard_init).map_err(|error| format!("{error:#}"))
+            }
             AgentMode::Pause => display::pause(),
             AgentMode::Protocol => {
                 println!("{OLDEST_PROTOCOL} {PROTOCOL}");
@@ -154,8 +161,11 @@ pub fn main() {
 /// `midgard-agent serve`: serves sessions and runs the Wayland display for the default
 /// user (with midgard's waypipe and [`Display::Agent`]). One thread runs everything (see
 /// [`rt`]).
-fn agent() -> Result<()> {
+fn agent(install: bool) -> Result<()> {
     let config = fetch_config()?;
+    if install {
+        setup::install().context("installing the agent in /run/midgard")?;
+    }
     let config = CONFIG.get_or_init(|| config);
     let agent_display = config.display == Display::Agent && Path::new(WAYPIPE_PATH).exists();
     let watcher = ready::Watcher::new(config.ready);
@@ -237,8 +247,17 @@ mod tests {
     fn agent_modes() {
         Agent::command().debug_assert();
         assert!(matches!(
+            agent(&["midgard-agent", "serve", "--from-midgard-init"]),
+            Ok(AgentMode::Serve {
+                from_midgard_init: true
+            })
+        ));
+        // A guest whose image has the agent.
+        assert!(matches!(
             agent(&["midgard-agent", "serve"]),
-            Ok(AgentMode::Serve)
+            Ok(AgentMode::Serve {
+                from_midgard_init: false
+            })
         ));
         assert!(matches!(
             agent(&["midgard-agent", "pause"]),
